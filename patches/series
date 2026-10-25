@@ -26,3 +26,4 @@ helium/macos/helium-immersive-fullscreen.patch
 helium/macos/fix-history-swiper-lifetime.patch
 leto/spaces.patch
 leto/global-appearance.patch
+leto/emoji-avatars.patch

@@ -1,0 +1,230 @@
+--- a/chrome/browser/resources/settings/people_page/manage_profile.css
++++ b/chrome/browser/resources/settings/people_page/manage_profile.css
+@@ -60,6 +60,41 @@ cr-theme-color-picker {
+   margin-left: 0.5rem;
+ }
+ 
++#emojiGrid {
++  display: grid;
++  gap: 12px;
++  grid-template-columns: repeat(8, 56px);
++  padding-bottom: 12px;
++}
++
++.emoji-avatar {
++  align-items: center;
++  background: var(--cr-hover-background-color);
++  border: 2px solid transparent;
++  border-radius: 50%;
++  cursor: pointer;
++  display: flex;
++  font-family: 'Apple Color Emoji', 'Noto Color Emoji', sans-serif;
++  font-size: 28px;
++  height: 56px;
++  justify-content: center;
++  padding: 0;
++  width: 56px;
++}
++
++.emoji-avatar:hover {
++  background: var(--cr-active-background-color);
++}
++
++.emoji-avatar[aria-checked='true'] {
++  border-color: var(--cr-checked-color);
++}
++
++#emojiInput {
++  margin-bottom: 12px;
++  width: 288px;
++}
++
+ #profileAvatarSelector {
+   --avatar-size: var(--icon-size);
+   --avatar-spacing: var(--icon-grid-gap);
+--- a/chrome/browser/resources/settings/people_page/manage_profile.html.ts
++++ b/chrome/browser/resources/settings/people_page/manage_profile.html.ts
+@@ -69,6 +69,19 @@ export function getHtml(this: SettingsMa
+       </div>
+     </cr-dialog>
+   </div>
++  <div class="content" id="emojiGrid" role="radiogroup">
++    ${this.emojiAvatars_.map(item => html`
++      <button class="emoji-avatar" role="radio" data-emoji="${item.emoji}"
++          title="${item.label}" aria-label="${item.label}"
++          aria-checked="${item.emoji === this.selectedEmoji_}"
++          @click="${this.onEmojiClick_}">${item.emoji}</button>`)}
++  </div>
++  <div class="content">
++    <cr-input id="emojiInput" placeholder="Or type any emoji (Ctrl ⌘ Space)"
++        aria-label="Avatar emoji" spellcheck="false"
++        @input="${this.onEmojiInput_}">
++    </cr-input>
++  </div>
+   <div class="content grid-container">
+     <cr-profile-avatar-selector
+         id="profileAvatarSelector" .avatars="${this.availableIcons}"
+--- a/chrome/browser/resources/settings/people_page/manage_profile.ts
++++ b/chrome/browser/resources/settings/people_page/manage_profile.ts
+@@ -40,6 +40,69 @@ import {ManageProfileBrowserProxyImpl, P
+ const SettingsManageProfileElementBase =
+     SettingsViewMixinLit(WebUiListenerMixinLit(CrLitElement));
+ 
++export interface EmojiAvatar {
++  emoji: string;
++  label: string;
++}
++
++// Profiles are spaces, so offer icons for the reasons people keep them apart.
++// TODO(leto): Localize the labels.
++export const EMOJI_AVATARS: EmojiAvatar[] = [
++  {emoji: '💼', label: 'Work'},
++  {emoji: '🏠', label: 'Personal'},
++  {emoji: '🎓', label: 'School'},
++  {emoji: '💻', label: 'Development'},
++  {emoji: '🧪', label: 'Testing'},
++  {emoji: '🚀', label: 'Side project'},
++  {emoji: '🏢', label: 'Client'},
++  {emoji: '🛍️', label: 'Shopping'},
++  {emoji: '💰', label: 'Finance'},
++  {emoji: '📈', label: 'Investing'},
++  {emoji: '🧾', label: 'Admin'},
++  {emoji: '✈️', label: 'Travel'},
++  {emoji: '🎮', label: 'Gaming'},
++  {emoji: '🎨', label: 'Design'},
++  {emoji: '📚', label: 'Research'},
++  {emoji: '📰', label: 'News'},
++  {emoji: '💬', label: 'Social'},
++  {emoji: '🎵', label: 'Music'},
++  {emoji: '🎬', label: 'Entertainment'},
++  {emoji: '🏋️', label: 'Fitness'},
++  {emoji: '🍳', label: 'Cooking'},
++  {emoji: '👨‍👩‍👧', label: 'Family'},
++  {emoji: '🐶', label: 'Pets'},
++  {emoji: '🔒', label: 'Private'},
++];
++
++// Remembers which emoji the profile's custom avatar was drawn from, so that it
++// can be shown as selected. Settings storage is separate for every profile.
++const EMOJI_STORAGE_KEY = 'leto.avatarEmoji';
++
++// Draws `emoji` with the system emoji font into a transparent square image.
++function renderEmojiAvatar(emoji: string): string {
++  const size = 256;
++  const canvas = document.createElement('canvas');
++  canvas.width = size;
++  canvas.height = size;
++  const context = canvas.getContext('2d')!;
++  context.textAlign = 'center';
++  context.textBaseline = 'middle';
++  // Avatars are cropped to a circle, so keep the glyph inside it.
++  context.font = `${Math.round(size * 0.64)}px "Apple Color Emoji", ` +
++      `"Noto Color Emoji", sans-serif`;
++  context.fillText(emoji, size / 2, size / 2 + size * 0.04);
++  return canvas.toDataURL('image/png');
++}
++
++// Returns the first emoji in `text`, or null if it does not start with one.
++function firstEmoji(text: string): string|null {
++  const segmenter = new Intl.Segmenter(undefined, {granularity: 'grapheme'});
++  for (const {segment} of segmenter.segment(text.trim())) {
++    return /\p{Extended_Pictographic}/u.test(segment) ? segment : null;
++  }
++  return null;
++}
++
+ export interface SettingsManageProfileElement {
+   $: {
+     nameInput: CrInputElement,
+@@ -101,6 +164,11 @@ export class SettingsManageProfileElemen
+       hasEnterpriseLabel_: {type: Boolean},
+ 
+       /**
++       * The emoji the current avatar was drawn from, if any.
++       */
++      selectedEmoji_: {type: String},
++
++      /**
+        * TODO(dpapad): Move this back to the HTML file when the Polymer2 version
+        * of the code is deleted. Because of "\" being a special character in a
+        * JS string, can't satisfy both Polymer2 and Polymer3 at the same time
+@@ -119,6 +187,9 @@ export class SettingsManageProfileElemen
+   protected accessor hasEnterpriseLabel_: boolean =
+       loadTimeData.getBoolean('hasEnterpriseLabel');
+   protected accessor pattern_: string = '.*\\S.*';
++  protected accessor selectedEmoji_: string =
++      window.localStorage.getItem(EMOJI_STORAGE_KEY) || '';
++  protected readonly emojiAvatars_: EmojiAvatar[] = EMOJI_AVATARS;
+   private browserProxy_: ManageProfileBrowserProxy =
+       ManageProfileBrowserProxyImpl.getInstance();
+ 
+@@ -126,8 +197,15 @@ export class SettingsManageProfileElemen
+     super.connectedCallback();
+ 
+     const setIcons = (icons: AvatarIcon[]) => {
+-      this.availableIcons = icons;
+-      this.hasCustomAvatar_ = icons.some(icon => icon.isCustomAvatar);
++      // Emoji replace the illustrated default avatars; keep only the account
++      // picture and the custom image (which also holds the chosen emoji).
++      this.availableIcons =
++          icons.filter(icon => icon.isGaiaAvatar || icon.isCustomAvatar);
++      this.hasCustomAvatar_ = icons.some(
++          icon => icon.isCustomAvatar && !icon.isPlaceholder);
++      if (!this.hasCustomAvatar_) {
++        this.clearSelectedEmoji_();
++      }
+     };
+ 
+     this.addWebUiListener('available-icons-changed', setIcons);
+@@ -211,6 +289,7 @@ export class SettingsManageProfileElemen
+           this.$.avatarErrorDialog.showModal();
+           return;
+         }
++        this.clearSelectedEmoji_();
+         this.browserProxy_.setCustomAvatarFromFile(dataUrl);
+       };
+       reader.readAsDataURL(file);
+@@ -218,6 +297,33 @@ export class SettingsManageProfileElemen
+     input.click();
+   }
+ 
++  protected onEmojiClick_(event: Event) {
++    const emoji = (event.currentTarget as HTMLElement).dataset['emoji'];
++    if (emoji) {
++      this.setEmojiAvatar_(emoji);
++    }
++  }
++
++  protected onEmojiInput_(event: Event) {
++    const input = event.target as CrInputElement;
++    const emoji = firstEmoji(input.value);
++    if (emoji) {
++      this.setEmojiAvatar_(emoji);
++      input.value = '';
++    }
++  }
++
++  private setEmojiAvatar_(emoji: string) {
++    this.selectedEmoji_ = emoji;
++    window.localStorage.setItem(EMOJI_STORAGE_KEY, emoji);
++    this.browserProxy_.setCustomAvatarFromFile(renderEmojiAvatar(emoji));
++  }
++
++  private clearSelectedEmoji_() {
++    this.selectedEmoji_ = '';
++    window.localStorage.removeItem(EMOJI_STORAGE_KEY);
++  }
++
+   protected onClearAvatarCancelClick_() {
+     this.$.clearAvatarDialog.cancel();
+   }
+@@ -266,6 +372,9 @@ export class SettingsManageProfileElemen
+       return;
+     }
+ 
++    // Picking an image or the account picture replaces the emoji.
++    this.clearSelectedEmoji_();
++
+     if (this.profileAvatar_.isGaiaAvatar) {
+       this.browserProxy_.setProfileIconToGaiaAvatar();
+     } else if (
