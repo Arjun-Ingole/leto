@@ -1,0 +1,496 @@
+--- a/chrome/browser/app_controller_mac.mm
++++ b/chrome/browser/app_controller_mac.mm
+@@ -113,6 +113,7 @@
+ #include "chrome/browser/ui/tabs/vertical_tab_strip_state_controller.h"
+ #include "chrome/browser/ui/ui_features.h"
+ #include "chrome/browser/ui/views/color_provider_browser_helper.h"
++#include "chrome/browser/ui/views/leto/mini_window.h"
+ #include "chrome/browser/ui/webui/util/webui_util_desktop.h"
+ #include "chrome/browser/web_applications/web_app_helpers.h"
+ #include "chrome/common/channel_info.h"
+@@ -517,10 +518,18 @@ void OpenStartupTabsInBrowser(StartupTab
+         }));
+   }
+ 
+-  if (!regular_tabs.empty()) {
+-    app_controller_mac::RunInLastProfileSafely(
+-        base::BindOnce(&OpenStartupTabsInBrowserWithProfile, regular_tabs),
+-        app_controller_mac::kShowProfilePickerOnFailure);
++  // Leto: links from other apps open in a small window of their own, or as
++  // tabs in the space their site is set to open in, as in Arc.
++  for (const StartupTab& tab : regular_tabs) {
++    if (std::optional<base::FilePath> space = leto::GetSpaceForLink(tab.url)) {
++      app_controller_mac::RunInProfileSafely(
++          *space, base::BindOnce(&leto::OpenLinkInSpace, tab.url),
++          app_controller_mac::kShowProfilePickerOnFailure);
++    } else {
++      app_controller_mac::RunInLastProfileSafely(
++          base::BindOnce(&leto::OpenLinkInMiniWindow, tab.url),
++          app_controller_mac::kShowProfilePickerOnFailure);
++    }
+   }
+ }
+ 
+--- a/chrome/browser/prefs/browser_prefs.cc
++++ b/chrome/browser/prefs/browser_prefs.cc
+@@ -555,6 +555,7 @@
+ #if defined(TOOLKIT_VIEWS)
+ #include "chrome/browser/ui/browser_view_prefs.h"
+ #include "chrome/browser/ui/views/leto/global_appearance.h"
++#include "chrome/browser/ui/views/leto/mini_window.h"
+ #include "chrome/browser/ui/side_search/side_search_prefs.h"
+ #endif
+ 
+@@ -1541,6 +1542,7 @@ void RegisterLocalState(PrefRegistrySimp
+   ChromeContentBrowserClient::RegisterLocalStatePrefs(registry);
+ #if BUILDFLAG(IS_MAC)
+   leto::RegisterGlobalAppearanceLocalStatePrefs(registry);
++  leto::RegisterMiniWindowLocalStatePrefs(registry);
+ #endif
+ #if BUILDFLAG(CHROME_FOR_TESTING)
+   chrome_for_testing::RegisterPrefs(registry);
+--- a/chrome/browser/ui/BUILD.gn
++++ b/chrome/browser/ui/BUILD.gn
+@@ -3370,6 +3370,8 @@ static_library("ui") {
+       "views/leto/global_appearance.h",
+       "views/leto/link_preview.cc",
+       "views/leto/link_preview.h",
++      "views/leto/mini_window.cc",
++      "views/leto/mini_window.h",
+       "views/leto/reader_view.cc",
+       "views/leto/reader_view.h",
+       "views/leto/sidebar_header_view.cc",
+--- /dev/null
++++ b/chrome/browser/ui/views/leto/mini_window.cc
+@@ -0,0 +1,389 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/views/leto/mini_window.h"
++
++#include <algorithm>
++#include <memory>
++#include <string>
++#include <string_view>
++#include <utility>
++#include <vector>
++
++#include "base/files/file_path.h"
++#include "base/functional/bind.h"
++#include "base/memory/raw_ptr.h"
++#include "base/memory/weak_ptr.h"
++#include "base/strings/string_util.h"
++#include "base/strings/utf_string_conversions.h"
++#include "base/values.h"
++#include "chrome/app/vector_icons/vector_icons.h"
++#include "chrome/browser/browser_process.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/profiles/profile_attributes_entry.h"
++#include "chrome/browser/profiles/profile_attributes_storage.h"
++#include "chrome/browser/profiles/profile_manager.h"
++#include "chrome/browser/profiles/profile_window.h"
++#include "chrome/browser/ui/browser_commands.h"
++#include "chrome/browser/ui/browser_window.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/browser_window/public/profile_browser_collection.h"
++#include "chrome/browser/ui/navigator/browser_navigator.h"
++#include "chrome/browser/ui/navigator/browser_navigator_params.h"
++#include "chrome/browser/ui/tabs/tab_strip_model.h"
++#include "chrome/browser/ui/views/frame/browser_view.h"
++#include "chrome/browser/ui/views/leto/space_switcher.h"
++#include "chrome/browser/ui/views/toolbar/toolbar_view.h"
++#include "components/prefs/pref_registry_simple.h"
++#include "components/prefs/pref_service.h"
++#include "components/prefs/scoped_user_pref_update.h"
++#include "components/vector_icons/vector_icons.h"
++#include "content/public/browser/web_contents.h"
++#include "ui/base/metadata/metadata_header_macros.h"
++#include "ui/base/metadata/metadata_impl_macros.h"
++#include "ui/base/models/image_model.h"
++#include "ui/base/mojom/menu_source_type.mojom.h"
++#include "ui/base/page_transition_types.h"
++#include "ui/base/window_open_disposition.h"
++#include "ui/color/color_id.h"
++#include "ui/display/display.h"
++#include "ui/display/screen.h"
++#include "ui/gfx/geometry/insets.h"
++#include "ui/gfx/geometry/rect.h"
++#include "ui/menus/simple_menu_model.h"
++#include "ui/views/accessibility/view_accessibility.h"
++#include "ui/views/animation/ink_drop.h"
++#include "ui/views/controls/button/image_button.h"
++#include "ui/views/controls/highlight_path_generator.h"
++#include "ui/views/controls/menu/menu_runner.h"
++#include "ui/views/layout/box_layout.h"
++#include "ui/views/view.h"
++#include "ui/views/view_class_properties.h"
++#include "url/gurl.h"
++
++namespace leto {
++
++namespace {
++
++// Sites set to open in a space, as {site: profile directory name}.
++constexpr char kLinkRoutesPref[] = "leto.link_routes";
++
++constexpr int kMaxWidth = 1100;
++constexpr int kMaxHeight = 780;
++constexpr float kMaxScreenFraction = 0.72f;
++constexpr int kButtonSize = 28;
++constexpr int kButtonCornerRadius = 6;
++constexpr int kIconSize = 16;
++
++constexpr char16_t kOpenInLeto[] = u"Open in Leto";
++constexpr char16_t kMoreSpaces[] = u"Choose a space";
++
++// The site a link belongs to, for routing: its host without "www.".
++std::string SiteForUrl(const GURL& url) {
++  std::string_view host = url.host();
++  if (base::StartsWith(host, "www.")) {
++    host.remove_prefix(4);
++  }
++  return std::string(host);
++}
++
++// Spaces in the order the space bar shows them.
++std::vector<ProfileAttributesEntry*> GetSpaces() {
++  std::vector<ProfileAttributesEntry*> spaces;
++  for (ProfileAttributesEntry* entry :
++       g_browser_process->profile_manager()
++           ->GetProfileAttributesStorage()
++           .GetAllProfilesAttributesSortedForDisplay()) {
++    if (!entry->IsOmitted()) {
++      spaces.push_back(entry);
++    }
++  }
++  return spaces;
++}
++
++void SetSpaceForSite(const std::string& site,
++                     const base::FilePath& profile_path,
++                     bool always) {
++  ScopedDictPrefUpdate routes(g_browser_process->local_state(),
++                              kLinkRoutesPref);
++  if (always) {
++    routes->Set(site, profile_path.BaseName().AsUTF8Unsafe());
++  } else {
++    routes->Remove(site);
++  }
++}
++
++bool IsSiteInSpace(const std::string& site,
++                   const base::FilePath& profile_path) {
++  const std::string* name = g_browser_process->local_state()
++                                ->GetDict(kLinkRoutesPref)
++                                .FindString(site);
++  return name && *name == profile_path.BaseName().AsUTF8Unsafe();
++}
++
++// Shows `browser`'s space in place of the one on screen, or brings its window
++// forward if it is on screen already.
++void BringSpaceOnScreen(BrowserWindowInterface* browser) {
++  BrowserWindow* window = BrowserWindow::FromBrowser(browser);
++  if (!window) {
++    return;
++  }
++  if (!window->IsVisible() && ShowSpace(browser)) {
++    return;
++  }
++  window->Show();
++  window->Activate();
++}
++
++// Moves the small window's page into the space of the profile at
++// `profile_path`, and closes the small window.
++void MoveToSpace(base::WeakPtr<BrowserWindowInterface> mini,
++                 const base::FilePath& profile_path) {
++  if (!mini) {
++    return;
++  }
++  content::WebContents* contents =
++      mini->GetTabStripModel()->GetActiveWebContents();
++  if (!contents) {
++    return;
++  }
++  if (profile_path == mini->GetProfile()->GetPath()) {
++    // The page itself moves, keeping its state, as Chromium does for apps.
++    // The space comes on screen first, so that only its window is shown.
++    if (BrowserWindowInterface* target =
++            ProfileBrowserCollection::GetForProfile(mini->GetProfile())
++                ->FindTabbedBrowser()) {
++      BringSpaceOnScreen(target);
++    }
++    chrome::OpenInChrome(mini.get());
++    return;
++  }
++  // Pages can't move between profiles, so it opens afresh in the other space.
++  profiles::LoadProfileAsync(profile_path,
++                             base::BindOnce(
++                                 [](const GURL& url, Profile* profile) {
++                                   if (profile) {
++                                     OpenLinkInSpace(url, profile);
++                                   }
++                                 },
++                                 contents->GetVisibleURL()));
++  if (BrowserWindow* window = BrowserWindow::FromBrowser(mini.get())) {
++    window->Close();
++  }
++}
++
++std::unique_ptr<views::ImageButton> MakeButton(
++    const gfx::VectorIcon& icon,
++    std::u16string_view name,
++    views::Button::PressedCallback callback) {
++  auto button = std::make_unique<views::ImageButton>(std::move(callback));
++  button->SetImageModel(views::Button::STATE_NORMAL,
++                        ui::ImageModel::FromVectorIcon(
++                            icon, ui::kColorSysOnSurfaceSubtle, kIconSize));
++  button->SetImageHorizontalAlignment(views::ImageButton::ALIGN_CENTER);
++  button->SetImageVerticalAlignment(views::ImageButton::ALIGN_MIDDLE);
++  button->SetPreferredSize(gfx::Size(kButtonSize, kButtonSize));
++  button->SetTooltipText(std::u16string(name));
++  button->GetViewAccessibility().SetName(std::u16string(name));
++  views::InkDrop::Get(button.get())
++      ->SetMode(views::InkDropHost::InkDropMode::ON);
++  button->SetHasInkDropActionOnClick(true);
++  views::InkDrop::Get(button.get())->SetBaseColor(ui::kColorSysOnSurface);
++  views::InkDrop::Get(button.get())->SetHighlightOpacity(0.08f);
++  views::InstallRoundRectHighlightPathGenerator(button.get(), gfx::Insets(),
++                                                kButtonCornerRadius);
++  return button;
++}
++
++// The small window's own buttons, at the end of its toolbar: one to move the
++// page into its space, and a menu to move it to another space or to always
++// open its site in one.
++class MiniWindowControls : public views::View,
++                           public ui::SimpleMenuModel::Delegate {
++  METADATA_HEADER(MiniWindowControls, views::View)
++
++ public:
++  explicit MiniWindowControls(BrowserWindowInterface* mini)
++      : mini_(mini->GetWeakPtr()) {
++    SetLayoutManager(std::make_unique<views::BoxLayout>(
++                         views::BoxLayout::Orientation::kHorizontal,
++                         gfx::Insets::VH(0, 6), /*between_child_spacing=*/2))
++        ->set_cross_axis_alignment(
++            views::BoxLayout::CrossAxisAlignment::kCenter);
++    AddChildView(
++        MakeButton(kOpenInFullIcon, kOpenInLeto,
++                   base::BindRepeating(&MiniWindowControls::OpenInOwnSpace,
++                                       base::Unretained(this))));
++    spaces_button_ = AddChildView(
++        MakeButton(vector_icons::kKeyboardArrowDownIcon, kMoreSpaces,
++                   base::BindRepeating(&MiniWindowControls::ShowSpacesMenu,
++                                       base::Unretained(this))));
++  }
++  MiniWindowControls(const MiniWindowControls&) = delete;
++  MiniWindowControls& operator=(const MiniWindowControls&) = delete;
++  ~MiniWindowControls() override = default;
++
++  // ui::SimpleMenuModel::Delegate:
++  bool IsCommandIdChecked(int command_id) const override {
++    const size_t index = static_cast<size_t>(command_id - kAlwaysCommand);
++    return command_id >= kAlwaysCommand && index < spaces_.size() &&
++           IsSiteInSpace(site_, spaces_[index]);
++  }
++
++  void ExecuteCommand(int command_id, int event_flags) override {
++    if (command_id >= kAlwaysCommand) {
++      const size_t index = static_cast<size_t>(command_id - kAlwaysCommand);
++      if (index < spaces_.size()) {
++        SetSpaceForSite(site_, spaces_[index],
++                        !IsSiteInSpace(site_, spaces_[index]));
++      }
++      return;
++    }
++    const size_t index = static_cast<size_t>(command_id - kOpenCommand);
++    if (index < spaces_.size()) {
++      MoveToSpace(mini_, spaces_[index]);
++    }
++  }
++
++ private:
++  static constexpr int kOpenCommand = 1;
++  static constexpr int kAlwaysCommand = 1000;
++
++  void OpenInOwnSpace() {
++    if (mini_) {
++      MoveToSpace(mini_, mini_->GetProfile()->GetPath());
++    }
++  }
++
++  void ShowSpacesMenu() {
++    content::WebContents* contents =
++        mini_ ? mini_->GetTabStripModel()->GetActiveWebContents() : nullptr;
++    if (!contents || !GetWidget()) {
++      return;
++    }
++    site_ = SiteForUrl(contents->GetVisibleURL());
++    spaces_.clear();
++    menu_model_ = std::make_unique<ui::SimpleMenuModel>(this);
++    const std::vector<ProfileAttributesEntry*> spaces = GetSpaces();
++    for (size_t i = 0; i < spaces.size(); ++i) {
++      spaces_.push_back(spaces[i]->GetPath());
++      menu_model_->AddItem(kOpenCommand + static_cast<int>(i),
++                           u"Open in " + spaces[i]->GetName());
++    }
++    if (!site_.empty()) {
++      menu_model_->AddSeparator(ui::NORMAL_SEPARATOR);
++      for (size_t i = 0; i < spaces.size(); ++i) {
++        menu_model_->AddCheckItem(kAlwaysCommand + static_cast<int>(i),
++                                  u"Always open " + base::UTF8ToUTF16(site_) +
++                                      u" in " + spaces[i]->GetName());
++      }
++    }
++    menu_runner_ = std::make_unique<views::MenuRunner>(
++        menu_model_.get(), views::MenuRunner::HAS_MNEMONICS);
++    menu_runner_->RunMenuAt(GetWidget(), nullptr,
++                            spaces_button_->GetAnchorBoundsInScreen(),
++                            views::MenuAnchorPosition::kTopRight,
++                            ui::mojom::MenuSourceType::kMouse);
++  }
++
++  base::WeakPtr<BrowserWindowInterface> mini_;
++  raw_ptr<views::ImageButton> spaces_button_ = nullptr;
++  // Set while the menu is built, for its commands.
++  std::string site_;
++  std::vector<base::FilePath> spaces_;
++  std::unique_ptr<ui::SimpleMenuModel> menu_model_;
++  std::unique_ptr<views::MenuRunner> menu_runner_;
++};
++
++BEGIN_METADATA(MiniWindowControls)
++END_METADATA
++
++// Centred on the screen the pointer is on, smaller than the main window.
++gfx::Rect MiniWindowBounds() {
++  display::Screen* screen = display::Screen::Get();
++  const gfx::Rect work_area =
++      screen->GetDisplayNearestPoint(screen->GetCursorScreenPoint())
++          .work_area();
++  gfx::Rect bounds(
++      std::min(kMaxWidth,
++               static_cast<int>(work_area.width() * kMaxScreenFraction)),
++      std::min(kMaxHeight,
++               static_cast<int>(work_area.height() * kMaxScreenFraction)));
++  bounds.set_origin(work_area.CenterPoint() -
++                    gfx::Vector2d(bounds.width() / 2, bounds.height() / 2));
++  return bounds;
++}
++
++}  // namespace
++
++void RegisterMiniWindowLocalStatePrefs(PrefRegistrySimple* registry) {
++  registry->RegisterDictionaryPref(kLinkRoutesPref);
++}
++
++std::optional<base::FilePath> GetSpaceForLink(const GURL& url) {
++  if (!url.SchemeIsHTTPOrHTTPS()) {
++    return std::nullopt;
++  }
++  const base::DictValue& routes =
++      g_browser_process->local_state()->GetDict(kLinkRoutesPref);
++  // A site's rule covers its subdomains too.
++  std::string_view site = url.host();
++  while (!site.empty()) {
++    std::string_view key = site;
++    if (base::StartsWith(key, "www.")) {
++      key.remove_prefix(4);
++    }
++    if (const std::string* name = routes.FindString(key)) {
++      const base::FilePath path =
++          g_browser_process->profile_manager()->user_data_dir().AppendASCII(
++              *name);
++      if (g_browser_process->profile_manager()
++              ->GetProfileAttributesStorage()
++              .GetProfileAttributesWithPath(path)) {
++        return path;
++      }
++    }
++    const size_t dot = site.find('.');
++    if (dot == std::string_view::npos) {
++      break;
++    }
++    site.remove_prefix(dot + 1);
++  }
++  return std::nullopt;
++}
++
++void OpenLinkInSpace(const GURL& url, Profile* profile) {
++  NavigateParams params(profile, url, ui::PAGE_TRANSITION_AUTO_TOPLEVEL);
++  params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
++  params.browser =
++      ProfileBrowserCollection::GetForProfile(profile)->FindTabbedBrowser();
++  Navigate(&params);
++  if (params.browser) {
++    BringSpaceOnScreen(params.browser);
++  }
++}
++
++void OpenLinkInMiniWindow(const GURL& url, Profile* profile) {
++  if (!profile) {
++    return;
++  }
++  NavigateParams params(profile, url, ui::PAGE_TRANSITION_AUTO_TOPLEVEL);
++  params.disposition = WindowOpenDisposition::NEW_POPUP;
++  const gfx::Rect bounds = MiniWindowBounds();
++  params.window_features.bounds = bounds;
++  params.window_features.has_x = params.window_features.has_y = true;
++  params.window_features.has_width = params.window_features.has_height = true;
++  params.window_action = NavigateParams::WindowAction::kShowWindow;
++  Navigate(&params);
++
++  BrowserView* browser_view =
++      params.browser ? BrowserView::GetBrowserViewForBrowser(params.browser)
++                     : nullptr;
++  if (browser_view && browser_view->toolbar()) {
++    browser_view->toolbar()->AddChildView(
++        std::make_unique<MiniWindowControls>(params.browser));
++  }
++}
++
++}  // namespace leto
+--- /dev/null
++++ b/chrome/browser/ui/views/leto/mini_window.h
+@@ -0,0 +1,39 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_VIEWS_LETO_MINI_WINDOW_H_
++#define CHROME_BROWSER_UI_VIEWS_LETO_MINI_WINDOW_H_
++
++#include <optional>
++
++class GURL;
++class PrefRegistrySimple;
++class Profile;
++
++namespace base {
++class FilePath;
++}  // namespace base
++
++namespace leto {
++
++// Links opened from other apps, as in Arc's Little Arc: each opens in a small
++// window of its own instead of piling up as tabs in the main window. From
++// there the page can be moved into a space, and a site can be set to always
++// open in a particular space, like Arc's Air Traffic Control; those links skip
++// the small window and open as tabs in that space.
++
++void RegisterMiniWindowLocalStatePrefs(PrefRegistrySimple* registry);
++
++// The profile path of the space `url`'s site is set to open in, if any.
++std::optional<base::FilePath> GetSpaceForLink(const GURL& url);
++
++// Opens `url` as a tab in `profile`'s space and brings the space on screen.
++void OpenLinkInSpace(const GURL& url, Profile* profile);
++
++// Opens `url` in a small window of its own for `profile`.
++void OpenLinkInMiniWindow(const GURL& url, Profile* profile);
++
++}  // namespace leto
++
++#endif  // CHROME_BROWSER_UI_VIEWS_LETO_MINI_WINDOW_H_
