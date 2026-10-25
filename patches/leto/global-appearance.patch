@@ -1,0 +1,242 @@
+--- a/chrome/browser/chrome_browser_main.cc
++++ b/chrome/browser/chrome_browser_main.cc
+@@ -313,6 +313,7 @@
+ 
+ #if defined(TOOLKIT_VIEWS)
+ #include "chrome/browser/ui/views/chrome_browser_main_extra_parts_views.h"
++#include "chrome/browser/ui/views/leto/global_appearance.h"
+ #endif
+ 
+ #if defined(USE_AURA)
+@@ -1614,6 +1615,10 @@ void ChromeBrowserMainParts::PostProfile
+     chrome_extra_part->PostProfileInit(profile, is_initial_profile);
+   }
+ 
++#if BUILDFLAG(IS_MAC)
++  leto::AttachGlobalAppearance(profile);
++#endif
++
+ #if BUILDFLAG(IS_WIN)
+   // Verify that the profile is not on a network share and if so prepare to show
+   // notification to the user.
+--- a/chrome/browser/prefs/browser_prefs.cc
++++ b/chrome/browser/prefs/browser_prefs.cc
+@@ -554,6 +554,7 @@
+ 
+ #if defined(TOOLKIT_VIEWS)
+ #include "chrome/browser/ui/browser_view_prefs.h"
++#include "chrome/browser/ui/views/leto/global_appearance.h"
+ #include "chrome/browser/ui/side_search/side_search_prefs.h"
+ #endif
+ 
+@@ -1538,6 +1539,9 @@ void RegisterLocalState(PrefRegistrySimp
+       prefs::kHeliumCrashReportingMode,
+       static_cast<int>(helium::CrashReportingMode::kAsk));
+   ChromeContentBrowserClient::RegisterLocalStatePrefs(registry);
++#if BUILDFLAG(IS_MAC)
++  leto::RegisterGlobalAppearanceLocalStatePrefs(registry);
++#endif
+ #if BUILDFLAG(CHROME_FOR_TESTING)
+   chrome_for_testing::RegisterPrefs(registry);
+ #endif
+--- a/chrome/browser/ui/BUILD.gn
++++ b/chrome/browser/ui/BUILD.gn
+@@ -3361,6 +3361,8 @@ static_library("ui") {
+       "views/helium/fullscreen_window_controls_mac.mm",
+       "views/helium/native_frame_materials_mac.h",
+       "views/helium/native_frame_materials_mac.mm",
++      "views/leto/global_appearance.cc",
++      "views/leto/global_appearance.h",
+       "views/leto/space_bar_view.cc",
+       "views/leto/space_bar_view.h",
+       "views/leto/space_switcher.cc",
+--- /dev/null
++++ b/chrome/browser/ui/views/leto/global_appearance.cc
+@@ -0,0 +1,159 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/views/leto/global_appearance.h"
++
++#include <array>
++#include <map>
++#include <memory>
++#include <string>
++
++#include "base/auto_reset.h"
++#include "base/functional/bind.h"
++#include "base/no_destructor.h"
++#include "base/scoped_multi_source_observation.h"
++#include "base/values.h"
++#include "chrome/browser/browser_process.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/profiles/profile_observer.h"
++#include "components/prefs/pref_change_registrar.h"
++#include "components/prefs/pref_registry_simple.h"
++#include "components/prefs/pref_service.h"
++#include "components/prefs/scoped_user_pref_update.h"
++
++namespace leto {
++
++namespace {
++
++constexpr char kGlobalAppearancePref[] = "leto.global_appearance";
++
++// Profile prefs that shape how a browser window looks. Names are listed
++// literally so that a pref which is missing on some build is simply skipped.
++constexpr auto kSharedPrefs = std::to_array<const char*>({
++    // Helium layout and window chrome.
++    "helium.browser.layout",
++    "helium.browser.zen_mode",
++    "helium.browser.zen_mode_sidebar_pinned",
++    "helium.browser.zen_mode_top_chrome_pinned",
++    "helium.browser.rounded_frame",
++    "helium.browser.native_frame_materials",
++    "helium.browser.vertical_right_aligned",
++    "helium.browser.centered_location_bar",
++    "helium.browser.minimal_location_bar",
++    "helium.browser.show_progress_bar",
++    // Toolbar buttons.
++    "browser.show_home_button",
++    "browser.show_forward_button",
++    "browser.pin_split_tab_button",
++    // Sidebar and side panel.
++    "side_panel.is_right_aligned",
++    "vertical_tabs.expand_on_hover",
++    "vertical_tabs.collapsed_state",
++    "vertical_tabs.uncollapsed_width",
++    // Theme colors.
++    "browser.theme.color_scheme2",
++    "browser.theme.user_color2",
++    "browser.theme.color_variant2",
++    "browser.theme.follows_system_colors",
++    "browser.theme.is_grayscale2",
++    // Font sizes.
++    "webkit.webprefs.default_font_size",
++    "webkit.webprefs.default_fixed_font_size",
++    "webkit.webprefs.minimum_font_size",
++});
++
++class GlobalAppearance : public ProfileObserver {
++ public:
++  static GlobalAppearance& Get() {
++    static base::NoDestructor<GlobalAppearance> instance;
++    return *instance;
++  }
++
++  void Attach(Profile* profile) {
++    if (profile->IsOffTheRecord() || registrars_.contains(profile)) {
++      return;
++    }
++
++    PrefService* local_state = g_browser_process->local_state();
++    PrefService* prefs = profile->GetPrefs();
++    const base::DictValue stored =
++        local_state->GetDict(kGlobalAppearancePref).Clone();
++
++    {
++      base::AutoReset<bool> propagating(&propagating_, true);
++      ScopedDictPrefUpdate update(local_state, kGlobalAppearancePref);
++      for (const char* name : kSharedPrefs) {
++        const PrefService::Preference* pref = prefs->FindPreference(name);
++        if (!pref) {
++          continue;
++        }
++        if (const base::Value* value = stored.Find(name)) {
++          prefs->Set(name, *value);
++        } else if (!pref->IsDefaultValue()) {
++          // The first profile that carries this setting defines it for all.
++          update->Set(name, pref->GetValue()->Clone());
++        }
++      }
++    }
++
++    auto registrar = std::make_unique<PrefChangeRegistrar>();
++    registrar->Init(prefs);
++    for (const char* name : kSharedPrefs) {
++      if (prefs->FindPreference(name)) {
++        registrar->Add(name,
++                       base::BindRepeating(&GlobalAppearance::OnPrefChanged,
++                                           base::Unretained(this), profile,
++                                           std::string(name)));
++      }
++    }
++    registrars_[profile] = std::move(registrar);
++    profile_observations_.AddObservation(profile);
++  }
++
++ private:
++  friend class base::NoDestructor<GlobalAppearance>;
++
++  GlobalAppearance() = default;
++  ~GlobalAppearance() override = default;
++
++  // ProfileObserver:
++  void OnProfileWillBeDestroyed(Profile* profile) override {
++    registrars_.erase(profile);
++    profile_observations_.RemoveObservation(profile);
++  }
++
++  void OnPrefChanged(Profile* source, const std::string& name) {
++    if (propagating_) {
++      return;
++    }
++    base::AutoReset<bool> propagating(&propagating_, true);
++
++    const base::Value& value = source->GetPrefs()->GetValue(name);
++    ScopedDictPrefUpdate(g_browser_process->local_state(),
++                         kGlobalAppearancePref)
++        ->Set(name, value.Clone());
++    for (const auto& [profile, registrar] : registrars_) {
++      if (profile != source) {
++        profile->GetPrefs()->Set(name, value);
++      }
++    }
++  }
++
++  std::map<Profile*, std::unique_ptr<PrefChangeRegistrar>> registrars_;
++  base::ScopedMultiSourceObservation<Profile, ProfileObserver>
++      profile_observations_{this};
++  bool propagating_ = false;
++};
++
++}  // namespace
++
++void RegisterGlobalAppearanceLocalStatePrefs(PrefRegistrySimple* registry) {
++  registry->RegisterDictionaryPref(kGlobalAppearancePref);
++}
++
++void AttachGlobalAppearance(Profile* profile) {
++  GlobalAppearance::Get().Attach(profile);
++}
++
++}  // namespace leto
+--- /dev/null
++++ b/chrome/browser/ui/views/leto/global_appearance.h
+@@ -0,0 +1,25 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_VIEWS_LETO_GLOBAL_APPEARANCE_H_
++#define CHROME_BROWSER_UI_VIEWS_LETO_GLOBAL_APPEARANCE_H_
++
++class PrefRegistrySimple;
++class Profile;
++
++namespace leto {
++
++// Appearance settings (layout, zen mode, sidebar, theme colors, ...) are
++// shared by every profile, so that all spaces look like one browser. A change
++// made in any profile is copied to the other loaded profiles and remembered in
++// local state for profiles that are loaded later.
++
++void RegisterGlobalAppearanceLocalStatePrefs(PrefRegistrySimple* registry);
++
++// Applies the shared appearance to `profile` and keeps it in sync from now on.
++void AttachGlobalAppearance(Profile* profile);
++
++}  // namespace leto
++
++#endif  // CHROME_BROWSER_UI_VIEWS_LETO_GLOBAL_APPEARANCE_H_
