@@ -1,0 +1,39 @@
+--- a/chrome/browser/ui/views/session_crashed_bubble_view.cc
++++ b/chrome/browser/ui/views/session_crashed_bubble_view.cc
+@@ -32,6 +32,8 @@
+ #include "chrome/browser/ui/views/chrome_typography.h"
+ #include "chrome/browser/ui/views/frame/app_menu_button.h"
+ #include "chrome/browser/ui/views/frame/browser_view.h"
++#include "chrome/browser/ui/views/leto/command_bar.h"
++#include "chrome/browser/ui/views/leto/site_controls_view.h"
+ #include "chrome/browser/ui/views/frame/toolbar_button_provider.h"
+ #include "chrome/browser/ui/views/toolbar/app_menu_control.h"
+ #include "chrome/browser/ui/views/toolbar/toolbar_view.h"
+@@ -288,6 +290,18 @@ views::BubbleDialogDelegate* SessionCras
+   auto* control = browser_view->toolbar_button_provider()->GetAppMenuControl();
+   views::BubbleAnchor anchor =
+       control ? control->GetAnchor() : views::BubbleAnchor();
++  views::BubbleBorder::Arrow arrow = views::BubbleBorder::TOP_RIGHT;
++#if BUILDFLAG(IS_MAC)
++  // Leto: the toolbar is hidden, and anchoring to its menu button would bring
++  // it back. Hang the bubble off the sidebar's site pill instead.
++  if (leto::UsesCommandBar(browser)) {
++    if (views::View* pill = leto::GetExtensionPopupAnchor(browser);
++        pill && pill->GetWidget()) {
++      anchor = views::BubbleAnchor(pill);
++      arrow = views::BubbleBorder::LEFT_TOP;
++    }
++  }
++#endif
+ 
+   auto bubble_delegate_unique =
+       std::make_unique<SessionCrashedBubbleDelegate>(browser->GetProfile());
+@@ -333,7 +347,7 @@ views::BubbleDialogDelegate* SessionCras
+           l10n_util::GetStringUTF16(IDS_SESSION_CRASHED_VIEW_RESTORE_BUTTON)));
+ 
+   auto bubble = std::make_unique<views::BubbleDialogModelHost>(
+-      dialog_builder.Build(), anchor, views::BubbleBorder::TOP_RIGHT);
++      dialog_builder.Build(), anchor, arrow);
+ 
+   views::BubbleDialogDelegate* bubble_ptr = bubble.get();
+   g_instance_for_test = bubble_ptr;
