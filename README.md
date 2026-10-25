@@ -14,7 +14,8 @@ defaults, ad blocking, and lightweight interface.
 
 - **Spaces.** Each profile is a Space, and all Spaces share one window. Switch
   with the Space bar at the bottom of the sidebar, a two-finger swipe on the
-  sidebar, or Ctrl+Cmd+Left/Right.
+  sidebar, or Ctrl+Cmd+Left/Right. The "+" beside it adds a Space, and
+  right-clicking a Space edits it.
 - **A sidebar instead of a toolbar.** Back, forward, and reload sit next to the
   window controls, and a pill shows the current site. The page gets the whole
   window.
@@ -22,6 +23,8 @@ defaults, ad blocking, and lightweight interface.
   suggestions. Cmd+L edits the current address.
 - **Site controls.** Quick actions, your extensions, and site settings in one
   popover.
+- **Downloads in the sidebar.** Downloads show at the bottom of the sidebar
+  with their progress, and open in a popover beside it.
 - **Automatic picture-in-picture.** A playing video follows you out when you
   switch tabs or Spaces, and returns when you come back.
 - **Pinned tabs and archiving.** Cmd+D pins a tab. Tabs you haven't opened
