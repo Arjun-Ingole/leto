@@ -1,0 +1,277 @@
+--- a/chrome/browser/chrome_browser_main.cc
++++ b/chrome/browser/chrome_browser_main.cc
+@@ -314,6 +314,7 @@
+ #if defined(TOOLKIT_VIEWS)
+ #include "chrome/browser/ui/views/chrome_browser_main_extra_parts_views.h"
+ #include "chrome/browser/ui/views/leto/global_appearance.h"
++#include "chrome/browser/ui/views/leto/tab_archiver.h"
+ #endif
+ 
+ #if defined(USE_AURA)
+@@ -1617,6 +1618,7 @@ void ChromeBrowserMainParts::PostProfile
+ 
+ #if BUILDFLAG(IS_MAC)
+   leto::AttachGlobalAppearance(profile);
++  leto::StartTabArchiver();
+ #endif
+ 
+ #if BUILDFLAG(IS_WIN)
+--- a/chrome/browser/extensions/api/settings_private/prefs_util.cc
++++ b/chrome/browser/extensions/api/settings_private/prefs_util.cc
+@@ -228,6 +228,8 @@ const PrefsUtil::TypedPrefMap& PrefsUtil
+       settings_api::PrefType::kBoolean;
+   (*s_allowlist)[::prefs::kHeliumShowProgressBar] =
+       settings_api::PrefType::kBoolean;
++  (*s_allowlist)[::prefs::kLetoArchiveTabsAfterHours] =
++      settings_api::PrefType::kNumber;
+   (*s_allowlist)[::prefs::kHeliumZenMode] = settings_api::PrefType::kBoolean;
+   (*s_allowlist)[::prefs::kHeliumZenModeSidebarPinned] =
+       settings_api::PrefType::kBoolean;
+--- a/chrome/browser/resources/settings/appearance_page/appearance_layout_page.html.ts
++++ b/chrome/browser/resources/settings/appearance_page/appearance_layout_page.html.ts
+@@ -10,6 +10,17 @@ export function getHtml(this: SettingsAp
+   // clang-format off
+   return html`<!--_html_template_start_-->
+ <settings-section page-title="$i18n{layoutPageTitle}">
++  <div class="cr-row first">
++    <div class="flex cr-padded-text">
++      <div>$i18n{letoArchiveTabs}</div>
++      <div class="secondary">$i18n{letoArchiveTabsDescription}</div>
++    </div>
++    <settings-dropdown-menu id="archiveTabs"
++        label="$i18n{letoArchiveTabs}"
++        pref-key="leto.archive_tabs_after_hours"
++        .menuOptions="${this.archiveTabsOptions_}">
++    </settings-dropdown-menu>
++  </div>
+   <settings-toggle-button class="hr" disabled
+       ?hidden="${!this.showVerticalTabsExpandOnHoverSetting_() ||
+                  !this.isExpandOnHoverForcedByZenMode_()}"
+--- a/chrome/browser/resources/settings/appearance_page/appearance_layout_page.ts
++++ b/chrome/browser/resources/settings/appearance_page/appearance_layout_page.ts
+@@ -2,12 +2,14 @@
+ // You can use, redistribute, and/or modify this source code under
+ // the terms of the GPL-3.0 license that can be found in the LICENSE file.
+ 
++import '../controls/settings_dropdown_menu.js';
+ import '../controls/settings_toggle_button.js';
+ import '../settings_page/settings_section.js';
+ 
+ import {PrefServiceObserverMixinLit} from '/shared/settings/prefs2/pref_service_observer_mixin_lit.js';
+ import {CrLitElement} from 'chrome://resources/lit/v3_0/lit.rollup.js';
+ 
++import type {DropdownMenuOptionList} from '../controls/settings_dropdown_menu.js';
+ import {loadTimeData} from '../i18n_setup.js';
+ 
+ import {getCss} from './appearance_layout_page.css.js';
+@@ -48,6 +50,7 @@ export class SettingsAppearanceLayoutPag
+       zenModePref_: {type: Object},
+       zenModeSidebarPinnedPref_: {type: Object},
+       forcedExpandOnHoverPref_: {type: Object},
++      archiveTabsOptions_: {type: Array},
+     };
+   }
+ 
+@@ -62,6 +65,16 @@ export class SettingsAppearanceLayoutPag
+     value: true,
+   };
+ 
++  // Hours after which unused tabs are archived; see
++  // chrome/browser/ui/views/leto/tab_archiver.h.
++  protected accessor archiveTabsOptions_: DropdownMenuOptionList = [
++    {value: 12, name: loadTimeData.getString('letoArchiveAfter12Hours')},
++    {value: 24, name: loadTimeData.getString('letoArchiveAfterDay')},
++    {value: 24 * 7, name: loadTimeData.getString('letoArchiveAfterWeek')},
++    {value: 24 * 30, name: loadTimeData.getString('letoArchiveAfterMonth')},
++    {value: 0, name: loadTimeData.getString('letoArchiveNever')},
++  ];
++
+   protected accessor showVerticalTabsExpandOnHoverEnabled_: boolean =
+       loadTimeData.getBoolean('showVerticalTabsExpandOnHoverEnabled');
+ 
+--- a/chrome/browser/ui/BUILD.gn
++++ b/chrome/browser/ui/BUILD.gn
+@@ -3376,6 +3376,8 @@ static_library("ui") {
+       "views/leto/space_switcher.h",
+       "views/leto/space_switcher_mac.h",
+       "views/leto/space_switcher_mac.mm",
++      "views/leto/tab_archiver.cc",
++      "views/leto/tab_archiver.h",
+     ]
+ 
+     deps += [
+--- a/chrome/browser/ui/browser_ui_prefs.cc
++++ b/chrome/browser/ui/browser_ui_prefs.cc
+@@ -142,6 +142,7 @@ void RegisterBrowserUserPrefs(user_prefs
+   registry->RegisterBooleanPref(prefs::kHeliumMinimalLocationBar, false);
+ 
+   registry->RegisterBooleanPref(prefs::kHeliumShowProgressBar, true);
++  registry->RegisterIntegerPref(prefs::kLetoArchiveTabsAfterHours, 12);
+ 
+   registry->RegisterBooleanPref(prefs::kHomePageIsNewTabPage, true,
+                                 pref_registration_flags);
+--- a/chrome/browser/ui/cocoa/accelerators_cocoa.mm
++++ b/chrome/browser/ui/cocoa/accelerators_cocoa.mm
+@@ -55,7 +55,8 @@ const struct AcceleratorMapping {
+      ui::VKEY_B},
+     {IDC_SHOW_BOOKMARK_MANAGER, ui::EF_COMMAND_DOWN | ui::EF_ALT_DOWN,
+      ui::VKEY_B},
+-    {IDC_BOOKMARK_THIS_TAB, ui::EF_COMMAND_DOWN, ui::VKEY_D},
++    // Leto: Cmd+D pins and unpins the tab, as in Arc.
++    {IDC_WINDOW_PIN_TAB, ui::EF_COMMAND_DOWN, ui::VKEY_D},
+     {IDC_SHOW_DOWNLOADS, ui::EF_COMMAND_DOWN | ui::EF_SHIFT_DOWN, ui::VKEY_J},
+     {IDC_SHOW_HISTORY, ui::EF_COMMAND_DOWN, ui::VKEY_Y},
+     {IDC_VIEW_SOURCE, ui::EF_COMMAND_DOWN | ui::EF_ALT_DOWN, ui::VKEY_U},
+--- a/chrome/browser/ui/views/leto/global_appearance.cc
++++ b/chrome/browser/ui/views/leto/global_appearance.cc
+@@ -42,6 +42,8 @@ constexpr auto kSharedPrefs = std::to_ar
+     "helium.browser.centered_location_bar",
+     "helium.browser.minimal_location_bar",
+     "helium.browser.show_progress_bar",
++    // Tabs.
++    "leto.archive_tabs_after_hours",
+     // Toolbar buttons.
+     "browser.show_home_button",
+     "browser.show_forward_button",
+--- /dev/null
++++ b/chrome/browser/ui/views/leto/tab_archiver.cc
+@@ -0,0 +1,79 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/views/leto/tab_archiver.h"
++
++#include "base/functional/bind.h"
++#include "base/no_destructor.h"
++#include "base/time/time.h"
++#include "base/timer/timer.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
++#include "chrome/browser/ui/tabs/tab_enums.h"
++#include "chrome/browser/ui/tabs/tab_strip_model.h"
++#include "chrome/common/pref_names.h"
++#include "components/prefs/pref_service.h"
++#include "content/public/browser/web_contents.h"
++
++namespace leto {
++
++namespace {
++
++// How often tabs are checked. Archiving is not time critical, so this is long
++// enough to cost nothing.
++constexpr base::TimeDelta kCheckInterval = base::Minutes(10);
++
++bool ShouldArchive(TabStripModel* model, int index, base::Time cutoff) {
++  if (index == model->active_index() || model->IsTabPinned(index) ||
++      model->GetTabGroupForTab(index) || model->GetSplitForTab(index)) {
++    return false;
++  }
++  content::WebContents* contents = model->GetWebContentsAt(index);
++  return contents && !contents->IsCurrentlyAudible() &&
++         !contents->HasPictureInPictureVideo() &&
++         contents->GetLastActiveTime() < cutoff;
++}
++
++void ArchiveTabs(BrowserWindowInterface* browser) {
++  if (browser->GetType() != BrowserWindowInterface::TYPE_NORMAL ||
++      browser->GetProfile()->IsOffTheRecord()) {
++    return;
++  }
++  const int hours = browser->GetProfile()->GetPrefs()->GetInteger(
++      prefs::kLetoArchiveTabsAfterHours);
++  if (hours <= 0) {
++    return;
++  }
++  const base::Time cutoff = base::Time::Now() - base::Hours(hours);
++  TabStripModel* model = browser->GetTabStripModel();
++  // From the end, so that closing a tab doesn't shift the ones still to check.
++  for (int index = model->count() - 1; index >= 0; --index) {
++    if (ShouldArchive(model, index, cutoff)) {
++      model->CloseWebContentsAt(index,
++                                TabCloseTypes::CLOSE_CREATE_HISTORICAL_TAB);
++    }
++  }
++}
++
++void ArchiveAllSpaces() {
++  // Every space has its own window, shown or hidden, so this covers them all.
++  GlobalBrowserCollection::GetInstance()->ForEach(
++      [](BrowserWindowInterface* browser) {
++        ArchiveTabs(browser);
++        return true;
++      });
++}
++
++}  // namespace
++
++void StartTabArchiver() {
++  static base::NoDestructor<base::RepeatingTimer> timer;
++  if (!timer->IsRunning()) {
++    timer->Start(FROM_HERE, kCheckInterval,
++                 base::BindRepeating(&ArchiveAllSpaces));
++  }
++}
++
++}  // namespace leto
+--- /dev/null
++++ b/chrome/browser/ui/views/leto/tab_archiver.h
+@@ -0,0 +1,21 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_VIEWS_LETO_TAB_ARCHIVER_H_
++#define CHROME_BROWSER_UI_VIEWS_LETO_TAB_ARCHIVER_H_
++
++namespace leto {
++
++// Archives tabs that haven't been looked at for a while, as Arc does, so the
++// sidebar keeps only what is in use. Pinned tabs, tabs in groups or split
++// views, the active tab and tabs playing media are kept. Archived tabs are
++// closed into history, so they can be found from the command bar and reopened
++// with Cmd+Shift+T. The delay is the kLetoArchiveTabsAfterHours pref.
++
++// Starts checking every space's tabs periodically. Safe to call more than once.
++void StartTabArchiver();
++
++}  // namespace leto
++
++#endif  // CHROME_BROWSER_UI_VIEWS_LETO_TAB_ARCHIVER_H_
+--- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
++++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
+@@ -700,6 +700,19 @@ void AddAppearanceStrings(content::WebUI
+   };
+   html_source->AddLocalizedStrings(kLocalizedStrings);
+ 
++  // Leto's tab archiving, English only for now.
++  html_source->AddString("letoArchiveTabs", u"Archive unused tabs");
++  html_source->AddString(
++      "letoArchiveTabsDescription",
++      u"Tabs you haven't opened for a while close on their own. Pinned and "
++      u"grouped tabs stay. Find archived tabs in history or reopen them with "
++      u"\u2318\u21e7T.");
++  html_source->AddString("letoArchiveAfter12Hours", u"After 12 hours");
++  html_source->AddString("letoArchiveAfterDay", u"After a day");
++  html_source->AddString("letoArchiveAfterWeek", u"After a week");
++  html_source->AddString("letoArchiveAfterMonth", u"After 30 days");
++  html_source->AddString("letoArchiveNever", u"Never");
++
+   html_source->AddBoolean("ntpSimplificationBookmarksBarEnabled",
+                           base::FeatureList::IsEnabled(
+                               ntp_features::kNtpSimplificationBookmarkBar));
+--- a/chrome/common/pref_names.h
++++ b/chrome/common/pref_names.h
+@@ -659,6 +659,11 @@ inline constexpr char kHeliumMinimalLoca
+ inline constexpr char kHeliumShowProgressBar[] =
+     "helium.browser.show_progress_bar";
+ 
++// An integer pref with the number of hours after which tabs that haven't been
++// looked at are archived, as in Arc. Zero means tabs are never archived.
++inline constexpr char kLetoArchiveTabsAfterHours[] =
++    "leto.archive_tabs_after_hours";
++
+ // A boolean pref set to true if a Home button to open the Home pages should be
+ // visible on the toolbar.
+ inline constexpr char kShowHomeButton[] = "browser.show_home_button";
