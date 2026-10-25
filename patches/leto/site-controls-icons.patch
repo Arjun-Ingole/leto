@@ -1,0 +1,117 @@
+--- a/chrome/app/vector_icons/BUILD.gn
++++ b/chrome/app/vector_icons/BUILD.gn
+@@ -200,6 +200,10 @@ aggregate_vector_icons("chrome_vector_ic
+     "leading_scroll_old.icon",
+     "left_panel_close_flippable.icon",
+     "left_panel_close_old.icon",
++    "leto_copy.icon",
++    "leto_find.icon",
++    "leto_qr_code.icon",
++    "leto_reader.icon",
+     "library_add.icon",
+     "link_chrome_refresh_old.icon",
+     "list_alt.icon",
+--- /dev/null
++++ b/chrome/app/vector_icons/leto_copy.icon
+@@ -0,0 +1,19 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++// Two overlapping rounded sheets, drawn with even strokes in the style of
++// the system symbols.
++CANVAS_DIMENSIONS, 20,
++STROKE, 1.5f,
++ROUND_RECT, 3, 6.5, 10.5, 10.5, 2.5,
++NEW_PATH,
++STROKE, 1.5f,
++MOVE_TO, 6.5f, 6.5f,
++V_LINE_TO, 5.5f,
++ARC_TO, 2.5f, 2.5f, 0, 0, 1, 9, 3,
++H_LINE_TO, 14.5f,
++ARC_TO, 2.5f, 2.5f, 0, 0, 1, 17, 5.5f,
++V_LINE_TO, 11,
++ARC_TO, 2.5f, 2.5f, 0, 0, 1, 14.5f, 13.5f,
++H_LINE_TO, 13.5f
+--- /dev/null
++++ b/chrome/app/vector_icons/leto_find.icon
+@@ -0,0 +1,12 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++// A magnifying glass.
++CANVAS_DIMENSIONS, 20,
++STROKE, 1.5f,
++CIRCLE, 8.75f, 8.75f, 5.25f,
++NEW_PATH,
++STROKE, 1.5f,
++MOVE_TO, 12.75f, 12.75f,
++LINE_TO, 16.5f, 16.5f
+--- /dev/null
++++ b/chrome/app/vector_icons/leto_qr_code.icon
+@@ -0,0 +1,15 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++// Three finder squares and a few modules.
++CANVAS_DIMENSIONS, 20,
++STROKE, 1.5f,
++ROUND_RECT, 3, 3, 5, 5, 1.25f,
++ROUND_RECT, 12, 3, 5, 5, 1.25f,
++ROUND_RECT, 3, 12, 5, 5, 1.25f,
++NEW_PATH,
++ROUND_RECT, 11.25f, 11.25f, 2.5f, 2.5f, 0.6f,
++ROUND_RECT, 14.75f, 14.75f, 2.5f, 2.5f, 0.6f,
++ROUND_RECT, 14.75f, 11.25f, 2.5f, 2.5f, 0.6f,
++ROUND_RECT, 11.25f, 14.75f, 2.5f, 2.5f, 0.6f
+--- /dev/null
++++ b/chrome/app/vector_icons/leto_reader.icon
+@@ -0,0 +1,16 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++// A page of text.
++CANVAS_DIMENSIONS, 20,
++STROKE, 1.5f,
++ROUND_RECT, 4, 2.5f, 12, 15, 2.5f,
++NEW_PATH,
++STROKE, 1.5f,
++MOVE_TO, 7, 7,
++H_LINE_TO, 13,
++MOVE_TO, 7, 10,
++H_LINE_TO, 13,
++MOVE_TO, 7, 13,
++H_LINE_TO, 10.5f
+--- a/chrome/browser/ui/views/leto/site_controls_view.cc
++++ b/chrome/browser/ui/views/leto/site_controls_view.cc
+@@ -77,7 +77,7 @@ constexpr int kPadding = 12;
+ constexpr int kCornerRadius = 12;
+ constexpr int kSectionSpacing = 14;
+ constexpr int kTileHeight = 56;
+-constexpr int kTileIconSize = 18;
++constexpr int kTileIconSize = 20;
+ constexpr int kTileCornerRadius = 10;
+ constexpr int kRowHeight = 32;
+ constexpr int kRowIconSize = 16;
+@@ -356,14 +356,14 @@ class SiteControlsView : public views::V
+       return tile;
+     };
+ 
+-    copy_tile_ = add_tile(vector_icons::kLinkIcon, kCopyLink, IDC_COPY_URL);
++    copy_tile_ = add_tile(kLetoCopyIcon, kCopyLink, IDC_COPY_URL);
+     if (copy_tile_) {
+       copy_tile_->SetCallback(base::BindRepeating(&SiteControlsView::CopyLink,
+                                                   base::Unretained(this)));
+     }
+-    add_tile(kMenuBookIcon, kReader, IDC_SHOW_READING_MODE_SIDE_PANEL);
+-    add_tile(kQrCodeIcon, kQrCode, IDC_QRCODE_GENERATOR);
+-    add_tile(kFindInPageIcon, kFind, IDC_FIND);
++    add_tile(kLetoReaderIcon, kReader, IDC_SHOW_READING_MODE_SIDE_PANEL);
++    add_tile(kLetoQrCodeIcon, kQrCode, IDC_QRCODE_GENERATOR);
++    add_tile(kLetoFindIcon, kFind, IDC_FIND);
+     row->SetVisible(!row->children().empty());
+   }
+ 
