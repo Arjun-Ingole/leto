@@ -36,7 +36,7 @@ in [`patches/leto/`](patches/leto), applied after Helium's and
 ungoogled-chromium's patches. Each patch is a single feature, so Leto can follow
 new Helium releases by rebasing a small, readable patch set.
 
-Logo concepts live in [`branding/logos.html`](branding/logos.html).
+The logo lives in [`branding/`](branding).
 
 ## Building
 
