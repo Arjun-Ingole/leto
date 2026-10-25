@@ -1,0 +1,461 @@
+--- a/chrome/browser/ui/views/download/bubble/download_toolbar_ui_controller.cc
++++ b/chrome/browser/ui/views/download/bubble/download_toolbar_ui_controller.cc
+@@ -98,7 +98,19 @@ PinnedToolbarActions* GetPinnedToolbarAc
+              : nullptr;
+ }
+ 
++#if BUILDFLAG(IS_MAC)
++// Leto keeps downloads in the sidebar's footer, as the toolbar stays hidden.
++ToolbarButton* GetSidebarDownloadsButton(BrowserView* browser_view) {
++  return browser_view ? browser_view->GetSidebarDownloadsButton() : nullptr;
++}
++#endif
++
+ ToolbarButton* GetDownloadsButton(BrowserView* browser_view) {
++#if BUILDFLAG(IS_MAC)
++  if (auto* button = GetSidebarDownloadsButton(browser_view)) {
++    return button;
++  }
++#endif
+   auto* container = GetPinnedToolbarActions(browser_view);
+   return container ? container->GetDownloadButton() : nullptr;
+ }
+@@ -475,6 +487,12 @@ void DownloadToolbarUIController::TearDo
+ }
+ 
+ void DownloadToolbarUIController::Show() {
++#if BUILDFLAG(IS_MAC)
++  if (auto* button = GetSidebarDownloadsButton(browser_view_)) {
++    button->SetVisible(true);
++    return;
++  }
++#endif
+   auto* container = GetPinnedToolbarActions(browser_view_);
+   if (!container) {
+     return;
+@@ -484,6 +502,12 @@ void DownloadToolbarUIController::Show()
+ 
+ void DownloadToolbarUIController::Hide() {
+   HideDetails();
++#if BUILDFLAG(IS_MAC)
++  if (auto* button = GetSidebarDownloadsButton(browser_view_)) {
++    button->SetVisible(false);
++    return;
++  }
++#endif
+   auto* container = GetPinnedToolbarActions(browser_view_);
+   if (!container) {
+     return;
+@@ -498,10 +522,20 @@ bool DownloadToolbarUIController::IsShow
+ 
+ void DownloadToolbarUIController::Enable() {
+   action_item_->SetEnabled(true);
++#if BUILDFLAG(IS_MAC)
++  if (auto* button = GetSidebarDownloadsButton(browser_view_)) {
++    button->SetEnabled(true);
++  }
++#endif
+ }
+ 
+ void DownloadToolbarUIController::Disable() {
+   action_item_->SetEnabled(false);
++#if BUILDFLAG(IS_MAC)
++  if (auto* button = GetSidebarDownloadsButton(browser_view_)) {
++    button->SetEnabled(false);
++  }
++#endif
+ }
+ 
+ void DownloadToolbarUIController::UpdateDownloadIcon(
+@@ -511,7 +545,17 @@ void DownloadToolbarUIController::Update
+ 
+   if (updates.show_animation && show_download_started_animation_) {
+     has_pending_download_started_animation_ = true;
+-    if (auto* container = GetPinnedToolbarActions(browser_view_)) {
++#if BUILDFLAG(IS_MAC)
++    if (GetSidebarDownloadsButton(browser_view_)) {
++      // Wait for the footer to lay out the button that was just shown.
++      content::GetUIThreadTaskRunner({})->PostTask(
++          FROM_HERE,
++          base::BindOnce(
++              &DownloadToolbarUIController::ShowPendingDownloadStartedAnimation,
++              weak_factory_.GetWeakPtr()));
++    } else
++#endif
++        if (auto* container = GetPinnedToolbarActions(browser_view_)) {
+       container->PostOrQueueActionAfterAnimation(base::BindOnce(
+           &DownloadToolbarUIController::ShowPendingDownloadStartedAnimation,
+           weak_factory_.GetWeakPtr()));
+@@ -573,6 +617,10 @@ bool DownloadToolbarUIController::IsFull
+   if (fullscreen_utils::IsInContentFullscreen(browser_view_->browser())) {
+     return true;
+   }
++  // The sidebar is revealed for the bubble, in fullscreen too.
++  if (GetSidebarDownloadsButton(browser_view_)) {
++    return false;
++  }
+ #endif
+ 
+   // If immersive fullscreen, check if top chrome is visible.
+@@ -704,6 +752,16 @@ void DownloadToolbarUIController::Update
+   action_item_->SetProperty(kActionItemUnderlineIndicatorKey, is_icon_active);
+ 
+   action_item_->SetImage(ui::ImageModel::FromVectorIcon(*new_icon, icon_color));
++#if BUILDFLAG(IS_MAC)
++  // The sidebar's button isn't bound to the action, so it is updated here.
++  const bool is_sidebar_button =
++      button == GetSidebarDownloadsButton(browser_view_);
++  if (is_sidebar_button) {
++    button->SetImageModel(
++        views::Button::STATE_NORMAL,
++        ui::ImageModel::FromVectorIcon(*new_icon, icon_color));
++  }
++#endif
+ 
+   // Update the toolbar button's tooltip.
+   std::u16string& tooltip_for_progress_count =
+@@ -725,6 +783,13 @@ void DownloadToolbarUIController::Update
+   } else {
+     action_item_->SetTooltipText(tooltip_for_progress_count);
+   }
++#if BUILDFLAG(IS_MAC)
++  if (is_sidebar_button) {
++    const std::u16string tooltip(action_item_->GetTooltipText());
++    button->SetTooltipText(tooltip);
++    button->GetViewAccessibility().SetName(tooltip);
++  }
++#endif
+ 
+   redraw_progress_soon_ = false;
+ 
+@@ -959,6 +1024,17 @@ void DownloadToolbarUIController::ShowBu
+     return;
+   }
+ 
++#if BUILDFLAG(IS_MAC)
++  // Open from the sidebar's footer, revealing the sidebar if it is hidden,
++  // rather than from the hidden toolbar.
++  if (auto* button = GetSidebarDownloadsButton(browser_view_)) {
++    button->SetVisible(true);
++    browser_view_->RevealSidebarForBubble();
++    OnBubbleAnchorAssembled(views::BubbleAnchor(button->parent()->parent()));
++    return;
++  }
++#endif
++
+   auto* container = GetPinnedToolbarActions(browser_view_);
+   if (!container) {
+     return;
+@@ -994,9 +1070,18 @@ void DownloadToolbarUIController::OnBubb
+           ImmersiveModeController::ANIMATE_REVEAL_YES);
+     }
+   }
++  views::BubbleBorder::Arrow arrow = views::BubbleBorder::TOP_RIGHT;
++#if BUILDFLAG(IS_MAC)
++  // From the sidebar's footer, the bubble opens beside the sidebar, level with
++  // its bottom.
++  if (GetSidebarDownloadsButton(browser_view_)) {
++    arrow = browser_view_->IsVerticalTabStripRightAligned()
++                ? views::BubbleBorder::RIGHT_BOTTOM
++                : views::BubbleBorder::LEFT_BOTTOM;
++  }
++#endif
+   auto bubble_delegate = std::make_unique<views::BubbleDialogDelegate>(
+-      anchor.value(), views::BubbleBorder::TOP_RIGHT,
+-      views::BubbleBorder::DIALOG_SHADOW,
++      anchor.value(), arrow, views::BubbleBorder::DIALOG_SHADOW,
+       /*autosize=*/true);
+   bubble_delegate->SetOwnedByWidget(
+       views::WidgetDelegate::OwnedByWidgetPassKey());
+@@ -1080,6 +1165,11 @@ void DownloadToolbarUIController::OnBubb
+ 
+ void DownloadToolbarUIController::OnBubbleClosing() {
+   immersive_revealed_lock_.reset();
++#if BUILDFLAG(IS_MAC)
++  if (browser_view_ && GetSidebarDownloadsButton(browser_view_)) {
++    browser_view_->OnSidebarBubbleClosed();
++  }
++#endif
+   bubble_delegate_ = nullptr;
+   bubble_contents_ = nullptr;
+   bubble_closer_.reset();
+--- a/chrome/browser/ui/views/frame/browser_view.cc
++++ b/chrome/browser/ui/views/frame/browser_view.cc
+@@ -188,8 +188,6 @@
+ #include "chrome/browser/ui/views/frame/top_controls_slide_controller.h"
+ #include "chrome/browser/ui/views/frame/vertical_tab_strip_background_blur_backdrop.h"
+ #include "chrome/browser/ui/views/frame/vertical_tab_strip_region_view.h"
+-#include "chrome/browser/ui/views/leto/command_bar.h"
+-#include "chrome/browser/ui/views/leto/space_switcher.h"
+ #include "chrome/browser/ui/views/frame/web_contents_close_handler.h"
+ #include "chrome/browser/ui/views/fullscreen_control/fullscreen_control_host.h"
+ #include "chrome/browser/ui/views/glic/glic_button_interface.h"
+@@ -200,6 +198,8 @@
+ #include "chrome/browser/ui/views/intent_picker_bubble_view.h"
+ #include "chrome/browser/ui/views/interaction/browser_elements_views.h"
+ #include "chrome/browser/ui/views/interaction/browser_elements_views_impl.h"
++#include "chrome/browser/ui/views/leto/command_bar.h"
++#include "chrome/browser/ui/views/leto/space_switcher.h"
+ #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
+ #include "chrome/browser/ui/views/new_tab_footer/footer_web_view.h"
+ #include "chrome/browser/ui/views/omnibox/omnibox_popup_closer.h"
+@@ -232,6 +232,10 @@
+ #include "chrome/browser/ui/views/tabs/tab/tab_accessibility.h"
+ #include "chrome/browser/ui/views/tabs/tab_strip.h"
+ #include "chrome/browser/ui/views/tabs/vertical/vertical_tab_strip_top_container.h"
++#if BUILDFLAG(IS_MAC)
++#include "chrome/browser/ui/views/leto/site_controls_view.h"
++#include "chrome/browser/ui/views/tabs/vertical/vertical_tab_strip_bottom_container.h"
++#endif
+ #include "chrome/browser/ui/views/theme_copying_widget.h"
+ #include "chrome/browser/ui/views/toolbar/app_menu_control.h"
+ #include "chrome/browser/ui/views/toolbar/avatar_toolbar_button_interface.h"
+@@ -2070,6 +2074,14 @@ void BrowserView::UpdateZenModeReveal(bo
+     reveal_side = true;
+   }
+ 
++#if BUILDFLAG(IS_MAC)
++  // Keep the sidebar visible while a bubble opened from its controls, like the
++  // downloads bubble or a permission prompt, is open.
++  if (!reveal_side && HasOpenBubbleFromSidebarControls()) {
++    reveal_side = true;
++  }
++#endif
++
+   // Pinned top chrome stays visible regardless of cursor position.
+   if (IsZenModeTopChromePinned()) {
+     reveal_top = true;
+@@ -2235,6 +2247,66 @@ bool IsSidePanelOpen(const SidePanel* si
+ 
+ }  // namespace
+ 
++#if BUILDFLAG(IS_MAC)
++bool BrowserView::HasOpenBubbleFromSidebarControls() const {
++  if (!vertical_tab_strip_region_view_ || !GetWidget()) {
++    return false;
++  }
++  // The footer, and the header around the site pill. Bubbles from the tabs in
++  // between, like hover cards, come and go with the cursor instead.
++  std::vector<const views::View*> roots;
++  if (const views::View* footer =
++          vertical_tab_strip_region_view_->GetBottomContainer()) {
++    roots.push_back(footer);
++  }
++  if (const views::View* pill = leto::GetExtensionPopupAnchor(browser_);
++      pill && pill->parent()) {
++    roots.push_back(pill->parent());
++  }
++  for (views::Widget* widget :
++       views::Widget::GetAllOwnedWidgets(GetWidget()->GetNativeView())) {
++    for (const views::View* root : roots) {
++      if (IsOpenBubbleAnchoredInViewSubtree(widget, root)) {
++        return true;
++      }
++    }
++  }
++  return false;
++}
++
++ToolbarButton* BrowserView::GetSidebarDownloadsButton() {
++  if (!vertical_tab_strip_region_view_ || !ShouldDrawVerticalTabStrip() ||
++      !vertical_tab_strip_region_view_->GetBottomContainer()) {
++    return nullptr;
++  }
++  return vertical_tab_strip_region_view_->GetBottomContainer()
++      ->downloads_button();
++}
++
++void BrowserView::RevealSidebarForBubble() {
++  if (!zen_mode_enabled_ || zen_side_chrome_animation_.GetCurrentValue() == 1) {
++    return;
++  }
++  zen_cursor_exit_timer_.Stop();
++  zen_side_chrome_animation_.Reset(1);
++  if (auto* frame_view = GetFrameView()) {
++    frame_view->SetCaptionButtonsOpacity(1.0f);
++  }
++  InvalidateLayout();
++  DeprecatedLayoutImmediately();
++}
++
++void BrowserView::OnSidebarBubbleClosed() {
++  if (!zen_mode_enabled_) {
++    return;
++  }
++  // The bubble's widget is still closing, so check once it is gone.
++  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
++      FROM_HERE, base::BindOnce(&BrowserView::UpdateZenModeRevealFromCursor,
++                                GetAsWeakPtr()));
++}
++#endif
++
+ bool BrowserView::HasOpenBubbleFromTopContainer() const {
+   if (IsSidePanelOpen(side_panel_)) {
+     return true;
+--- a/chrome/browser/ui/views/frame/browser_view.h
++++ b/chrome/browser/ui/views/frame/browser_view.h
+@@ -105,6 +105,7 @@ class TabDragTarget;
+ class TabSearchBubbleHost;
+ class TabStrip;
+ class TabStripRegionView;
++class ToolbarButton;
+ class ToolbarButtonProvider;
+ class ToolbarView;
+ class TopContainerView;
+@@ -445,6 +446,20 @@ class BrowserView : public BrowserWindow
+   void ToggleZenModeSideChrome();
+   void ToggleZenModeTopChrome();
+ 
++#if BUILDFLAG(IS_MAC)
++  // Leto keeps downloads in the sidebar's footer. Returns its downloads
++  // button, or null if the sidebar isn't drawn.
++  ToolbarButton* GetSidebarDownloadsButton();
++
++  // Shows the sidebar at once if it is hidden, so that a bubble can open from
++  // it. It stays shown while the bubble is open.
++  void RevealSidebarForBubble();
++
++  // Lets the sidebar hide again, if the cursor has left it, once a bubble
++  // opened from it has closed.
++  void OnSidebarBubbleClosed();
++#endif
++
+   // Returns the widget for anchoring bubbles and dialogs.
+   // This returns BrowserWidget except on fullscreen macOS where the toolbar is
+   // hosted in an OverlayWidget.
+@@ -970,6 +985,9 @@ class BrowserView : public BrowserWindow
+   bool IsPointInZenTopChromeBounds(const gfx::Point& point) const;
+   bool IsPointInZenSideChromeBounds(const gfx::Point& point) const;
+   bool HasOpenBubbleFromTopContainer() const;
++#if BUILDFLAG(IS_MAC)
++  bool HasOpenBubbleFromSidebarControls() const;
++#endif
+   bool GetCursorLocationInBrowserView(gfx::Point* cursor_location) const;
+ 
+   // Callback for the loading animation(s) associated with this view.
+--- a/chrome/browser/ui/views/tabs/vertical/vertical_tab_strip_bottom_container.cc
++++ b/chrome/browser/ui/views/tabs/vertical/vertical_tab_strip_bottom_container.cc
+@@ -5,16 +5,22 @@
+ #include "chrome/browser/ui/views/tabs/vertical/vertical_tab_strip_bottom_container.h"
+ 
+ #include "base/functional/bind.h"
++#include "build/build_config.h"
+ #include "chrome/browser/ui/browser_element_identifiers.h"
+ #include "chrome/browser/ui/tabs/vertical_tab_strip_state_controller.h"
+ #include "chrome/browser/ui/views/frame/browser_view.h"
+ #include "chrome/browser/ui/views/frame/vertical_tab_strip_region_view.h"
+ #include "chrome/browser/ui/views/tabs/vertical/vertical_new_tab_button.h"
+-#include "build/build_config.h"
+ #include "ui/gfx/geometry/insets.h"
+ 
+ #if BUILDFLAG(IS_MAC)
++#include "chrome/app/vector_icons/vector_icons.h"
++#include "chrome/browser/ui/color/chrome_color_id.h"
++#include "chrome/browser/ui/views/download/bubble/download_toolbar_ui_controller.h"
+ #include "chrome/browser/ui/views/leto/space_bar_view.h"
++#include "chrome/browser/ui/views/toolbar/toolbar_button.h"
++#include "ui/base/models/image_model.h"
++#include "ui/views/accessibility/view_accessibility.h"
+ #endif
+ #include "ui/base/metadata/metadata_impl_macros.h"
+ #include "ui/views/view_class_properties.h"
+@@ -50,10 +56,52 @@ VerticalTabStripBottomContainer::Vertica
+       views::FlexSpecification(views::LayoutOrientation::kVertical,
+                                views::MinimumFlexSizeRule::kScaleToZero,
+                                views::MaximumFlexSizeRule::kUnbounded));
+-  space_bar_ = AddChildView(std::make_unique<leto::SpaceBarView>(browser_));
+-  space_bar_->SetProperty(views::kCrossAxisAlignmentKey,
+-                          views::LayoutAlignment::kCenter);
+-  space_bar_->SetProperty(views::kMarginsKey, gfx::Insets::VH(8, 0));
++
++  // The footer: downloads on the left, the spaces in the middle, and a slot as
++  // wide as the downloads one on the right, so the spaces stay centered.
++  footer_ = AddChildView(std::make_unique<views::FlexLayoutView>());
++  footer_->SetOrientation(views::LayoutOrientation::kHorizontal);
++  footer_->SetCrossAxisAlignment(views::LayoutAlignment::kCenter);
++  footer_->SetProperty(views::kMarginsKey, gfx::Insets::VH(4, 0));
++
++  constexpr int kFooterSlotSize = 28;
++  auto* leading_slot = footer_->AddChildView(std::make_unique<views::View>());
++  leading_slot->SetUseDefaultFillLayout(true);
++  leading_slot->SetPreferredSize(gfx::Size(kFooterSlotSize, kFooterSlotSize));
++  // Downloads live here instead of in the toolbar, which stays hidden. The
++  // button shows while there are recent downloads, like the toolbar's did.
++  downloads_button_ = leading_slot->AddChildView(
++      std::make_unique<ToolbarButton>(base::BindRepeating(
++          [](BrowserWindowInterface* browser) {
++            if (auto* controller = DownloadToolbarUIController::From(browser)) {
++              controller->InvokeUI();
++            }
++          },
++          browser_)));
++  downloads_button_->SetImageModel(
++      views::Button::STATE_NORMAL,
++      ui::ImageModel::FromVectorIcon(kDownloadIcon,
++                                     kColorDownloadToolbarButtonInactive));
++  downloads_button_->SetTooltipText(u"Downloads");
++  downloads_button_->GetViewAccessibility().SetName(u"Downloads");
++  downloads_button_->SetVisible(false);
++
++  const auto add_flexible_gap = [this]() {
++    footer_->AddChildView(std::make_unique<views::View>())
++        ->SetProperty(
++            views::kFlexBehaviorKey,
++            views::FlexSpecification(views::LayoutOrientation::kHorizontal,
++                                     views::MinimumFlexSizeRule::kScaleToZero,
++                                     views::MaximumFlexSizeRule::kUnbounded));
++  };
++  add_flexible_gap();
++  space_bar_ =
++      footer_->AddChildView(std::make_unique<leto::SpaceBarView>(browser_));
++  space_bar_->SetProperty(views::kMarginsKey, gfx::Insets::VH(4, 0));
++  add_flexible_gap();
++  trailing_slot_ = footer_->AddChildView(std::make_unique<views::View>());
++  trailing_slot_->SetUseDefaultFillLayout(true);
++  trailing_slot_->SetPreferredSize(gfx::Size(kFooterSlotSize, kFooterSlotSize));
+ #endif
+ 
+   OnCollapseStateChanged(state_controller->GetCollapseState());
+@@ -105,9 +153,10 @@ void VerticalTabStripBottomContainer::Up
+                                : views::LayoutOrientation::kHorizontal;
+ 
+   if (space_bar_) {
+-    // Stack the new tab button above the space bar in every state, and only
+-    // show the space bar when there is room for it.
++    // Stack the new tab button above the footer in every state, and only show
++    // the spaces when there is room for them. Downloads stay reachable.
+     space_bar_->SetVisible(!collapsed);
++    trailing_slot_->SetVisible(!collapsed);
+     SetOrientation(views::LayoutOrientation::kVertical);
+     SetCrossAxisAlignment(views::LayoutAlignment::kStretch);
+     new_tab_button_->SetProperty(
+--- a/chrome/browser/ui/views/tabs/vertical/vertical_tab_strip_bottom_container.h
++++ b/chrome/browser/ui/views/tabs/vertical/vertical_tab_strip_bottom_container.h
+@@ -12,6 +12,7 @@
+ 
+ class BrowserWindowInterface;
+ class ExpandOnHoverLock;
++class ToolbarButton;
+ class VerticalNewTabButton;
+ 
+ namespace actions {
+@@ -38,6 +39,9 @@ class VerticalTabStripBottomContainer :
+ 
+   void OnCollapseStateChanged(tabs::VerticalTabStripCollapseState state);
+ 
++  // The sidebar's downloads button, which stands in for the toolbar's.
++  ToolbarButton* downloads_button() { return downloads_button_; }
++
+  private:
+   void OnNewTabButtonContextMenuWillShow();
+   void OnNewTabButtonContextMenuClosed();
+@@ -48,6 +52,9 @@ class VerticalTabStripBottomContainer :
+   raw_ptr<VerticalNewTabButton> new_tab_button_ = nullptr;
+   raw_ptr<views::View> spacer_ = nullptr;
+   raw_ptr<views::View> space_bar_ = nullptr;
++  raw_ptr<views::FlexLayoutView> footer_ = nullptr;
++  raw_ptr<ToolbarButton> downloads_button_ = nullptr;
++  raw_ptr<views::View> trailing_slot_ = nullptr;
+   base::CallbackListSubscription collapsed_state_change_subscription_;
+   base::CallbackListSubscription new_tab_button_pressed_subscription_;
+ 
