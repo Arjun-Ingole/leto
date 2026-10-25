@@ -1,0 +1,467 @@
+--- a/chrome/browser/ui/BUILD.gn
++++ b/chrome/browser/ui/BUILD.gn
+@@ -3363,6 +3363,8 @@ static_library("ui") {
+       "views/helium/native_frame_materials_mac.mm",
+       "views/leto/global_appearance.cc",
+       "views/leto/global_appearance.h",
++      "views/leto/sidebar_header_view.cc",
++      "views/leto/sidebar_header_view.h",
+       "views/leto/space_bar_view.cc",
+       "views/leto/space_bar_view.h",
+       "views/leto/space_switcher.cc",
+--- a/chrome/browser/ui/tabs/tab_strip_prefs.cc
++++ b/chrome/browser/ui/tabs/tab_strip_prefs.cc
+@@ -35,8 +35,8 @@ void RegisterProfilePrefs(user_prefs::Pr
+   registry->RegisterIntegerPref(prefs::kHeliumLayout,
+                                 std::to_underlying(HeliumLayoutType::kVertical));
+   registry->RegisterBooleanPref(prefs::kHeliumVerticalRightAligned, false);
+-  registry->RegisterBooleanPref(prefs::kHeliumZenMode, false);
+-  registry->RegisterBooleanPref(prefs::kHeliumZenModeSidebarPinned, false);
++  registry->RegisterBooleanPref(prefs::kHeliumZenMode, true);
++  registry->RegisterBooleanPref(prefs::kHeliumZenModeSidebarPinned, true);
+   registry->RegisterBooleanPref(prefs::kHeliumZenModeTopChromePinned, false);
+ }
+ 
+--- a/chrome/browser/ui/views/frame/browser_view.cc
++++ b/chrome/browser/ui/views/frame/browser_view.cc
+@@ -2022,7 +2022,13 @@ void BrowserView::UpdateZenModeRevealFro
+   const std::optional<gfx::Point> previous_cursor = zen_last_cursor_;
+   zen_last_cursor_ = cursor;
+ 
++#if BUILDFLAG(IS_MAC)
++  // The sidebar holds navigation, so the toolbar is not revealed by hovering
++  // the top edge; it only shows while the address bar is in use.
++  const bool in_top_trigger = false;
++#else
+   const bool in_top_trigger = IsPointInZenTopTrigger(cursor);
++#endif
+   const bool in_top_chrome = IsPointInZenTopChromeBounds(cursor);
+   const bool reveal_top = in_top_trigger || in_top_chrome;
+ 
+@@ -5984,7 +5990,12 @@ void BrowserView::OnThemeChanged() {
+   // Reapply zen mode state so buttons stay hidden during zen mode.
+   if (zen_mode_enabled_) {
+     if (auto* frame_view = GetFrameView()) {
++#if BUILDFLAG(IS_MAC)
++      frame_view->SetCaptionButtonsOpacity(
++          std::max(GetTopChromeRevealRatio(), GetSideChromeRevealRatio()));
++#else
+       frame_view->SetCaptionButtonsOpacity(GetTopChromeRevealRatio());
++#endif
+     }
+   }
+ }
+@@ -6922,6 +6933,14 @@ void BrowserView::AnimationProgressed(co
+       multi_contents_view_->MaybeUpdateBorderForZenReveal();
+     }
+     InvalidateLayout();
++#if BUILDFLAG(IS_MAC)
++    // The window controls sit at the top of the sidebar, so show them while
++    // either the toolbar or the sidebar is revealed.
++    if (auto* frame_view = GetFrameView()) {
++      frame_view->SetCaptionButtonsOpacity(
++          std::max(GetTopChromeRevealRatio(), GetSideChromeRevealRatio()));
++    }
++#else
+     if (top_chrome_animation) {
+       if (auto* frame_view = GetFrameView()) {
+         // Fade caption buttons with the toolbar.  The toolbar still reserves
+@@ -6930,6 +6949,7 @@ void BrowserView::AnimationProgressed(co
+         frame_view->SetCaptionButtonsOpacity(GetTopChromeRevealRatio());
+       }
+     }
++#endif
+   }
+ }
+ 
+--- a/chrome/browser/ui/views/frame/vertical_tab_strip_region_view.cc
++++ b/chrome/browser/ui/views/frame/vertical_tab_strip_region_view.cc
+@@ -55,6 +55,10 @@
+ #include "chrome/browser/ui/views/tabs/shared/drop_arrow.h"
+ #include "chrome/browser/ui/views/tabs/vertical/vertical_tab_strip_bottom_container.h"
+ #include "chrome/browser/ui/views/tabs/vertical/vertical_tab_strip_focus_swipe_controller.h"
++
++#if BUILDFLAG(IS_MAC)
++#include "chrome/browser/ui/views/leto/sidebar_header_view.h"
++#endif
+ #include "chrome/browser/ui/web_applications/app_browser_controller.h"
+ #include "chrome/grit/generated_resources.h"
+ #include "components/tabs/public/tab_group.h"
+@@ -141,6 +145,16 @@ VerticalTabStripRegionView::VerticalTabS
+   const int region_horizontal_padding =
+       GetLayoutConstant(LayoutConstant::kVerticalTabStripHorizontalPadding);
+ 
++#if BUILDFLAG(IS_MAC)
++  // Navigation and the site pill take the toolbar's place at the top.
++  auto* sidebar_header = content_area_view_->AddChildView(
++      std::make_unique<leto::SidebarHeaderView>(browser_view->browser()));
++  sidebar_header->SetProperty(
++      views::kMarginsKey,
++      gfx::Insets::TLBR(2, region_horizontal_padding, 8,
++                        region_horizontal_padding));
++#endif
++
+   bottom_button_container_ = content_area_view_->AddChildView(
+       std::make_unique<VerticalTabStripBottomContainer>(
+           state_controller_, root_action_item, browser_view->browser(),
+--- /dev/null
++++ b/chrome/browser/ui/views/leto/sidebar_header_view.cc
+@@ -0,0 +1,280 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/views/leto/sidebar_header_view.h"
++
++#include <memory>
++#include <string>
++#include <string_view>
++
++#include "base/functional/bind.h"
++#include "base/strings/string_util.h"
++#include "base/strings/utf_string_conversions.h"
++#include "chrome/app/chrome_command_ids.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/ui/browser_commands.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/color/chrome_color_id.h"
++#include "chrome/browser/ui/tabs/tab_strip_model.h"
++#include "chrome/browser/ui/tabs/vertical_tab_strip_state_controller.h"
++#include "chrome/browser/ui/views/page_info/page_info_bubble_specification.h"
++#include "chrome/browser/ui/views/page_info/page_info_bubble_view.h"
++#include "chrome/browser/ui/views/toolbar/toolbar_ink_drop_util.h"
++#include "chrome/common/pref_names.h"
++#include "chrome/common/webui_url_constants.h"
++#include "components/prefs/pref_service.h"
++#include "components/vector_icons/vector_icons.h"
++#include "content/public/browser/navigation_controller.h"
++#include "content/public/browser/navigation_entry.h"
++#include "content/public/browser/navigation_handle.h"
++#include "content/public/browser/web_contents.h"
++#include "ui/base/metadata/metadata_impl_macros.h"
++#include "ui/base/models/image_model.h"
++#include "ui/gfx/geometry/insets.h"
++#include "ui/views/accessibility/view_accessibility.h"
++#include "ui/views/background.h"
++#include "ui/views/bubble/bubble_border.h"
++#include "ui/views/bubble/bubble_dialog_delegate_view.h"
++#include "ui/views/controls/button/image_button.h"
++#include "ui/views/controls/button/label_button.h"
++#include "ui/views/layout/box_layout.h"
++#include "ui/views/widget/widget.h"
++#include "url/gurl.h"
++
++namespace leto {
++
++namespace {
++
++// The macOS window controls sit in the top left corner of the sidebar; the
++// navigation buttons share their row.
++constexpr int kNavRowHeight = 30;
++constexpr int kNavButtonSize = 28;
++constexpr int kNavIconSize = 16;
++constexpr int kPillHeight = 34;
++constexpr int kPillButtonSize = 26;
++constexpr int kPillIconSize = 14;
++constexpr int kPillCornerRadius = 10;
++constexpr int kSpacing = 8;
++
++// TODO(leto): Localize.
++constexpr char16_t kPlaceholder[] = u"Search or Enter URL...";
++
++std::unique_ptr<views::ImageButton> MakeIconButton(
++    const gfx::VectorIcon& icon,
++    int button_size,
++    int icon_size,
++    std::u16string_view tooltip,
++    views::Button::PressedCallback callback) {
++  auto button = std::make_unique<views::ImageButton>(std::move(callback));
++  button->SetImageModel(
++      views::Button::STATE_NORMAL,
++      ui::ImageModel::FromVectorIcon(icon, kColorToolbarButtonIcon, icon_size));
++  button->SetImageModel(views::Button::STATE_DISABLED,
++                        ui::ImageModel::FromVectorIcon(
++                            icon, kColorToolbarButtonIconInactive, icon_size));
++  button->SetImageHorizontalAlignment(views::ImageButton::ALIGN_CENTER);
++  button->SetImageVerticalAlignment(views::ImageButton::ALIGN_MIDDLE);
++  button->SetPreferredSize(gfx::Size(button_size, button_size));
++  button->SetTooltipText(std::u16string(tooltip));
++  button->GetViewAccessibility().SetName(std::u16string(tooltip));
++  ConfigureInkDrop(button.get());
++  return button;
++}
++
++// The text for the site pill: the host for web pages, the title otherwise.
++std::u16string SiteText(content::WebContents* contents) {
++  const GURL& url = contents->GetVisibleURL();
++  if (url.SchemeIsHTTPOrHTTPS()) {
++    std::string_view host = url.host();
++    if (base::StartsWith(host, "www.")) {
++      host.remove_prefix(4);
++    }
++    return base::UTF8ToUTF16(host);
++  }
++  if (url.is_empty() || url.host() == chrome::kChromeUINewTabHost) {
++    return std::u16string();
++  }
++  const std::u16string& title = contents->GetTitle();
++  return title.empty() ? base::UTF8ToUTF16(url.spec()) : title;
++}
++
++}  // namespace
++
++SidebarHeaderView::SidebarHeaderView(BrowserWindowInterface* browser)
++    : browser_(browser) {
++  SetLayoutManager(std::make_unique<views::BoxLayout>(
++      views::BoxLayout::Orientation::kVertical, gfx::Insets(), kSpacing));
++
++  // Back, forward and reload, right of the window controls.
++  auto* nav_row = AddChildView(std::make_unique<views::View>());
++  auto* nav_layout =
++      nav_row->SetLayoutManager(std::make_unique<views::BoxLayout>(
++          views::BoxLayout::Orientation::kHorizontal));
++  nav_layout->set_main_axis_alignment(
++      views::BoxLayout::MainAxisAlignment::kEnd);
++  nav_layout->set_cross_axis_alignment(
++      views::BoxLayout::CrossAxisAlignment::kCenter);
++  nav_layout->set_minimum_cross_axis_size(kNavRowHeight);
++
++  auto command = [](BrowserWindowInterface* browser, int id) {
++    return base::BindRepeating(
++        [](BrowserWindowInterface* browser, int id) {
++          chrome::ExecuteCommand(browser, id);
++        },
++        browser, id);
++  };
++  // TODO(leto): Localize the tooltips.
++  back_button_ = nav_row->AddChildView(
++      MakeIconButton(vector_icons::kArrowBackIcon, kNavButtonSize, kNavIconSize,
++                     u"Back", command(browser_, IDC_BACK)));
++  forward_button_ = nav_row->AddChildView(
++      MakeIconButton(vector_icons::kArrowForwardIcon, kNavButtonSize,
++                     kNavIconSize, u"Forward", command(browser_, IDC_FORWARD)));
++  reload_button_ = nav_row->AddChildView(
++      MakeIconButton(vector_icons::kRefreshIcon, kNavButtonSize, kNavIconSize,
++                     u"Reload", command(browser_, IDC_RELOAD)));
++
++  // The site pill.
++  auto* pill = AddChildView(std::make_unique<views::View>());
++  pill->SetBackground(views::CreateRoundedRectBackground(
++      kColorToolbarBackgroundSubtleEmphasis, kPillCornerRadius));
++  auto* pill_layout = pill->SetLayoutManager(std::make_unique<views::BoxLayout>(
++      views::BoxLayout::Orientation::kHorizontal, gfx::Insets::VH(0, 4)));
++  pill_layout->set_cross_axis_alignment(
++      views::BoxLayout::CrossAxisAlignment::kCenter);
++  pill_layout->set_minimum_cross_axis_size(kPillHeight);
++
++  site_button_ = pill->AddChildView(std::make_unique<views::LabelButton>(
++      command(browser_, IDC_FOCUS_LOCATION), std::u16string()));
++  site_button_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++  site_button_->SetLabelStyle(views::style::STYLE_BODY_4);
++  site_button_->SetMinSize(gfx::Size(0, kPillButtonSize));
++  site_button_->SetTooltipText(u"Edit address");
++  pill_layout->SetFlexForView(site_button_, 1);
++
++  copy_button_ = pill->AddChildView(
++      MakeIconButton(vector_icons::kLinkIcon, kPillButtonSize, kPillIconSize,
++                     u"Copy link", command(browser_, IDC_COPY_URL)));
++  controls_button_ = pill->AddChildView(MakeIconButton(
++      vector_icons::kTuneIcon, kPillButtonSize, kPillIconSize, u"Site controls",
++      base::BindRepeating(&SidebarHeaderView::ShowSiteControls,
++                          base::Unretained(this))));
++
++  for (int id : {IDC_BACK, IDC_FORWARD}) {
++    chrome::AddCommandObserver(browser_, id, this);
++    EnabledStateChangedForCommand(id, chrome::IsCommandEnabled(browser_, id));
++  }
++
++  browser_->GetTabStripModel()->AddObserver(this);
++  Observe(browser_->GetTabStripModel()->GetActiveWebContents());
++  UpdateSite();
++
++  if (auto* state_controller =
++          tabs::VerticalTabStripStateController::From(browser_)) {
++    collapsed_ = state_controller->GetCollapseState() !=
++                 tabs::VerticalTabStripCollapseState::kExpanded;
++    collapsed_subscription_ =
++        state_controller->RegisterOnCollapseChanged(base::BindRepeating(
++            [](SidebarHeaderView* view,
++               tabs::VerticalTabStripCollapseState state) {
++              view->collapsed_ =
++                  state != tabs::VerticalTabStripCollapseState::kExpanded;
++              view->UpdateVisibility();
++            },
++            base::Unretained(this)));
++  }
++
++  pref_change_registrar_.Init(browser_->GetProfile()->GetPrefs());
++  for (const char* pref :
++       {prefs::kHeliumZenMode, prefs::kHeliumZenModeTopChromePinned}) {
++    pref_change_registrar_.Add(
++        pref, base::BindRepeating(&SidebarHeaderView::UpdateVisibility,
++                                  base::Unretained(this)));
++  }
++  UpdateVisibility();
++}
++
++SidebarHeaderView::~SidebarHeaderView() {
++  for (int id : {IDC_BACK, IDC_FORWARD}) {
++    chrome::RemoveCommandObserver(browser_, id, this);
++  }
++  browser_->GetTabStripModel()->RemoveObserver(this);
++}
++
++void SidebarHeaderView::OnTabStripModelChanged(
++    TabStripModel* tab_strip_model,
++    const TabStripModelChange& change,
++    const TabStripSelectionChange& selection) {
++  if (selection.active_tab_changed()) {
++    Observe(selection.new_contents);
++    UpdateSite();
++  }
++}
++
++void SidebarHeaderView::DidFinishNavigation(
++    content::NavigationHandle* navigation_handle) {
++  // Includes same document navigations, which single page apps use.
++  if (navigation_handle->IsInPrimaryMainFrame()) {
++    UpdateSite();
++  }
++}
++
++void SidebarHeaderView::TitleWasSet(content::NavigationEntry* entry) {
++  UpdateSite();
++}
++
++void SidebarHeaderView::EnabledStateChangedForCommand(int id, bool enabled) {
++  if (id == IDC_BACK) {
++    back_button_->SetEnabled(enabled);
++  } else if (id == IDC_FORWARD) {
++    forward_button_->SetEnabled(enabled);
++  }
++}
++
++void SidebarHeaderView::UpdateVisibility() {
++  // The header replaces the toolbar, which is only hidden in zen mode.
++  const PrefService* prefs = browser_->GetProfile()->GetPrefs();
++  SetVisible(prefs->GetBoolean(prefs::kHeliumZenMode) &&
++             !prefs->GetBoolean(prefs::kHeliumZenModeTopChromePinned) &&
++             !collapsed_);
++}
++
++void SidebarHeaderView::UpdateSite() {
++  content::WebContents* contents = web_contents();
++  const std::u16string text = contents ? SiteText(contents) : std::u16string();
++  const bool is_placeholder = text.empty();
++
++  site_button_->SetText(is_placeholder ? kPlaceholder : text);
++  site_button_->SetEnabledTextColors(is_placeholder ? kColorOmniboxTextDimmed
++                                                    : kColorOmniboxText);
++  copy_button_->SetVisible(!is_placeholder);
++  controls_button_->SetVisible(!is_placeholder);
++}
++
++void SidebarHeaderView::ShowSiteControls() {
++  // TODO(leto): Replace with an Arc style popover with quick actions and
++  // extensions.
++  content::WebContents* contents = web_contents();
++  if (!contents) {
++    return;
++  }
++  content::NavigationEntry* entry = contents->GetController().GetVisibleEntry();
++  if (!entry || entry->IsInitialEntry()) {
++    return;
++  }
++
++  views::BubbleDialogDelegateView* bubble =
++      PageInfoBubbleView::CreatePageInfoBubble(
++          PageInfoBubbleSpecification::Builder(
++              views::BubbleAnchor(controls_button_.get()),
++              GetWidget()->GetNativeWindow(), contents, entry->GetVirtualURL())
++              .Build());
++  bubble->SetArrow(views::BubbleBorder::LEFT_TOP);
++  bubble->GetWidget()->Show();
++}
++
++BEGIN_METADATA(SidebarHeaderView)
++END_METADATA
++
++}  // namespace leto
+--- /dev/null
++++ b/chrome/browser/ui/views/leto/sidebar_header_view.h
+@@ -0,0 +1,75 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_VIEWS_LETO_SIDEBAR_HEADER_VIEW_H_
++#define CHROME_BROWSER_UI_VIEWS_LETO_SIDEBAR_HEADER_VIEW_H_
++
++#include "base/callback_list.h"
++#include "base/memory/raw_ptr.h"
++#include "chrome/browser/command_observer.h"
++#include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
++#include "components/prefs/pref_change_registrar.h"
++#include "content/public/browser/web_contents_observer.h"
++#include "ui/base/metadata/metadata_header_macros.h"
++#include "ui/views/view.h"
++
++class BrowserWindowInterface;
++
++namespace views {
++class ImageButton;
++class LabelButton;
++}  // namespace views
++
++namespace leto {
++
++// Top of the sidebar in place of the toolbar, as in Arc: back, forward and
++// reload next to the window controls, and below them a pill with the current
++// site that opens the address bar, copies the link or shows site controls.
++class SidebarHeaderView : public views::View,
++                          public TabStripModelObserver,
++                          public content::WebContentsObserver,
++                          public CommandObserver {
++  METADATA_HEADER(SidebarHeaderView, views::View)
++
++ public:
++  explicit SidebarHeaderView(BrowserWindowInterface* browser);
++  SidebarHeaderView(const SidebarHeaderView&) = delete;
++  SidebarHeaderView& operator=(const SidebarHeaderView&) = delete;
++  ~SidebarHeaderView() override;
++
++  // TabStripModelObserver:
++  void OnTabStripModelChanged(
++      TabStripModel* tab_strip_model,
++      const TabStripModelChange& change,
++      const TabStripSelectionChange& selection) override;
++
++  // content::WebContentsObserver:
++  void DidFinishNavigation(
++      content::NavigationHandle* navigation_handle) override;
++  void TitleWasSet(content::NavigationEntry* entry) override;
++
++  // CommandObserver:
++  void EnabledStateChangedForCommand(int id, bool enabled) override;
++
++ private:
++  void UpdateVisibility();
++  void UpdateSite();
++  void ShowSiteControls();
++
++  raw_ptr<BrowserWindowInterface> browser_;
++  raw_ptr<views::ImageButton> back_button_ = nullptr;
++  raw_ptr<views::ImageButton> forward_button_ = nullptr;
++  raw_ptr<views::ImageButton> reload_button_ = nullptr;
++  raw_ptr<views::LabelButton> site_button_ = nullptr;
++  raw_ptr<views::ImageButton> copy_button_ = nullptr;
++  raw_ptr<views::ImageButton> controls_button_ = nullptr;
++
++  bool collapsed_ = false;
++  PrefChangeRegistrar pref_change_registrar_;
++  base::CallbackListSubscription collapsed_subscription_;
++};
++
++}  // namespace leto
++
++#endif  // CHROME_BROWSER_UI_VIEWS_LETO_SIDEBAR_HEADER_VIEW_H_
