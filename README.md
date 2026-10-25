@@ -27,9 +27,11 @@ defaults, ad blocking, and lightweight interface.
   with their progress, and open in a popover beside it.
 - **Automatic picture-in-picture.** A playing video follows you out when you
   switch tabs or Spaces, and returns when you come back.
-- **Pinned tabs and archiving.** Cmd+D pins a tab. Tabs you haven't opened
-  for 12 hours close into history on their own, which you can change in
-  Settings.
+- **Pinned tabs and archiving.** Cmd+D pins a tab, or drag it up into the
+  pinned tabs; drag it back down to unpin it. Right-click a pinned tab to
+  give it a name of its own. Drop tabs on a Space in the sidebar's footer to
+  move them there. Tabs you haven't opened for 12 hours close into history
+  on their own, which you can change in Settings.
 - **Split view.** Cmd+Option+N asks what to open beside the current page, and
   Shift+Enter in the command bar opens any result in split view.
 - **Link previews.** Shift-click a link to open it in a card over the page,
@@ -41,6 +43,8 @@ defaults, ad blocking, and lightweight interface.
   fonts and light, sepia and dark themes.
 - **Lighter and more private.** Tabs in Spaces you aren't using go to sleep,
   and Cmd+Shift+C copies links without tracking parameters.
+- **Protected media plays.** Leto fetches Google's Widevine, which Helium
+  leaves out, so Spotify and other DRM sites play.
 - **Arc-like defaults.** Vertical tabs only, the last session restored on
   launch, appearance settings shared across Spaces, and emoji avatars for
   Spaces.
