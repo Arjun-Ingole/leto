@@ -1,0 +1,884 @@
+--- a/chrome/app/chrome_command_ids.h
++++ b/chrome/app/chrome_command_ids.h
+@@ -298,6 +298,8 @@
+ #define IDC_SHOW_TTC_MENU 40306
+ 
+ #define IDC_HELIUM_SERVICES_OPEN 40700
++#define IDC_LETO_NEXT_SPACE 40701
++#define IDC_LETO_PREVIOUS_SPACE 40702
+ 
+ // Spell-check
+ #define IDC_SPELLCHECK_SUGGESTION_0     41000
+--- a/chrome/browser/global_keyboard_shortcuts_mac.mm
++++ b/chrome/browser/global_keyboard_shortcuts_mac.mm
+@@ -122,6 +122,8 @@ const std::vector<KeyboardShortcutData>&
+       {true,  false, false, true,  kVK_LeftArrow,         IDC_SELECT_PREVIOUS_TAB},
+       {false, true,  true,  false, kVK_PageDown,          IDC_MOVE_TAB_NEXT},
+       {false, true,  true,  false, kVK_PageUp,            IDC_MOVE_TAB_PREVIOUS},
++      {true,  false, true,  false, kVK_RightArrow,        IDC_LETO_NEXT_SPACE},
++      {true,  false, true,  false, kVK_LeftArrow,         IDC_LETO_PREVIOUS_SPACE},
+ 
+       // Cmd-0..8 select the nth tab, with cmd-9 being "last tab".
+       {true,  false, false, false, kVK_ANSI_1,            IDC_SELECT_TAB_0},
+--- a/chrome/browser/ui/BUILD.gn
++++ b/chrome/browser/ui/BUILD.gn
+@@ -3361,6 +3361,12 @@ static_library("ui") {
+       "views/helium/fullscreen_window_controls_mac.mm",
+       "views/helium/native_frame_materials_mac.h",
+       "views/helium/native_frame_materials_mac.mm",
++      "views/leto/space_bar_view.cc",
++      "views/leto/space_bar_view.h",
++      "views/leto/space_switcher.cc",
++      "views/leto/space_switcher.h",
++      "views/leto/space_switcher_mac.h",
++      "views/leto/space_switcher_mac.mm",
+     ]
+ 
+     deps += [
+--- a/chrome/browser/ui/browser_command_controller.cc
++++ b/chrome/browser/ui/browser_command_controller.cc
+@@ -164,6 +164,7 @@
+ 
+ #if BUILDFLAG(IS_MAC)
+ #include "chrome/browser/ui/browser_commands_mac.h"
++#include "chrome/browser/ui/views/leto/space_switcher.h"
+ #endif
+ 
+ #if BUILDFLAG(IS_WIN)
+@@ -1389,6 +1390,14 @@ void BrowserCommandController::HandleCom
+     case IDC_HELIUM_SERVICES_OPEN:
+       ShowHeliumServices(webui::GetBrowserForOpeningWebUi(browser_));
+       break;
++#if BUILDFLAG(IS_MAC)
++    case IDC_LETO_NEXT_SPACE:
++      leto::SwitchSpace(browser_, 1);
++      break;
++    case IDC_LETO_PREVIOUS_SPACE:
++      leto::SwitchSpace(browser_, -1);
++      break;
++#endif
+     case IDC_OPEN_SAFETY_HUB:
+       ShowSettingsSubPage(webui::GetBrowserForOpeningWebUi(browser_),
+                           chrome::kSafetyHubSubPage);
+@@ -2084,6 +2093,10 @@ void BrowserCommandController::InitComma
+   // These are always enabled; the menu determines their menu item visibility.
+   command_updater_->UpdateCommandEnabled(IDC_UPGRADE_DIALOG, true);
+   command_updater_->UpdateCommandEnabled(IDC_HELIUM_SERVICES_OPEN, true);
++#if BUILDFLAG(IS_MAC)
++  command_updater_->UpdateCommandEnabled(IDC_LETO_NEXT_SPACE, true);
++  command_updater_->UpdateCommandEnabled(IDC_LETO_PREVIOUS_SPACE, true);
++#endif
+   command_updater_->UpdateCommandEnabled(IDC_TOGGLE_ZEN_MODE_TOP_CHROME_PIN,
+                                          false);
+   command_updater_->UpdateCommandEnabled(IDC_SET_BROWSER_AS_DEFAULT, true);
+--- /dev/null
++++ b/chrome/browser/ui/views/leto/space_switcher.cc
+@@ -0,0 +1,130 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/views/leto/space_switcher.h"
++
++#include <algorithm>
++#include <vector>
++
++#include "base/files/file_path.h"
++#include "base/functional/bind.h"
++#include "base/memory/weak_ptr.h"
++#include "chrome/browser/browser_process.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/profiles/profile_attributes_entry.h"
++#include "chrome/browser/profiles/profile_attributes_storage.h"
++#include "chrome/browser/profiles/profile_manager.h"
++#include "chrome/browser/profiles/profile_window.h"
++#include "chrome/browser/ui/browser_window.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/browser_window/public/profile_browser_collection.h"
++#include "chrome/browser/ui/views/leto/space_switcher_mac.h"
++#include "ui/gfx/geometry/rect.h"
++
++namespace leto {
++
++namespace {
++
++// Moves `target` onto `bounds` and reveals it in place of `source`.
++void PresentInPlace(base::WeakPtr<BrowserWindowInterface> source,
++                    const gfx::Rect& bounds,
++                    BrowserWindowInterface* target) {
++  if (!target) {
++    return;
++  }
++  BrowserWindow* target_window = BrowserWindow::FromBrowser(target);
++  if (!target_window) {
++    return;
++  }
++
++  BrowserWindow* source_window = source && source.get() != target
++                                     ? BrowserWindow::FromBrowser(source.get())
++                                     : nullptr;
++  if (!source_window) {
++    target_window->SetBounds(bounds);
++    target_window->Show();
++    return;
++  }
++
++  internal::CrossfadeToWindow(
++      source_window, target_window, bounds,
++      base::BindOnce(
++          [](base::WeakPtr<BrowserWindowInterface> source) {
++            if (!source) {
++              return;
++            }
++            if (BrowserWindow* window =
++                    BrowserWindow::FromBrowser(source.get())) {
++              window->Hide();
++            }
++          },
++          source));
++}
++
++void OnTargetProfileLoaded(base::WeakPtr<BrowserWindowInterface> source,
++                           const gfx::Rect& bounds,
++                           Profile* profile) {
++  if (!profile) {
++    return;
++  }
++
++  // Hidden windows still count as being on the current workspace on macOS,
++  // so a space we switched away from earlier is found and reused here.
++  if (BrowserWindowInterface* existing =
++          ProfileBrowserCollection::GetForProfile(profile)
++              ->FindTabbedBrowser()) {
++    PresentInPlace(source, bounds, existing);
++    return;
++  }
++
++  profiles::OpenBrowserWindowForProfile(
++      base::BindOnce(&PresentInPlace, source, bounds),
++      /*always_create=*/false, /*is_new_profile=*/false,
++      /*open_command_line_urls=*/false, profile);
++}
++
++}  // namespace
++
++void SwitchSpace(BrowserWindowInterface* current, int delta) {
++  std::vector<base::FilePath> paths;
++  for (ProfileAttributesEntry* entry :
++       g_browser_process->profile_manager()
++           ->GetProfileAttributesStorage()
++           .GetAllProfilesAttributesSortedForDisplay()) {
++    if (!entry->IsOmitted()) {
++      paths.push_back(entry->GetPath());
++    }
++  }
++  if (paths.size() < 2) {
++    return;
++  }
++
++  auto it = std::ranges::find(paths, current->GetProfile()->GetPath());
++  if (it == paths.end()) {
++    return;
++  }
++  const int count = static_cast<int>(paths.size());
++  const int index = static_cast<int>(it - paths.begin());
++  SwitchToSpace(current, paths[((index + delta) % count + count) % count]);
++}
++
++void SwitchToSpace(BrowserWindowInterface* current,
++                   const base::FilePath& profile_path) {
++  Profile* profile = current->GetProfile();
++  if (profile->IsOffTheRecord() || profile->IsGuestSession() ||
++      profile->GetPath() == profile_path) {
++    return;
++  }
++
++  BrowserWindow* window = BrowserWindow::FromBrowser(current);
++  if (!window) {
++    return;
++  }
++
++  profiles::LoadProfileAsync(
++      profile_path, base::BindOnce(&OnTargetProfileLoaded,
++                                   current->GetWeakPtr(), window->GetBounds()));
++}
++
++}  // namespace leto
+--- /dev/null
++++ b/chrome/browser/ui/views/leto/space_switcher.h
+@@ -0,0 +1,30 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_VIEWS_LETO_SPACE_SWITCHER_H_
++#define CHROME_BROWSER_UI_VIEWS_LETO_SPACE_SWITCHER_H_
++
++class BrowserWindowInterface;
++
++namespace base {
++class FilePath;
++}  // namespace base
++
++namespace leto {
++
++// Prototype of Arc-style spaces, where every profile is a space. Switching
++// shows the target profile's window in the exact bounds of `current` and then
++// hides `current`, so all profiles appear to share a single window.
++
++// Switches to the space `delta` positions away from the one shown in
++// `current`: +1 for the next space and -1 for the previous one.
++void SwitchSpace(BrowserWindowInterface* current, int delta);
++
++// Switches `current` to the space of the profile at `profile_path`.
++void SwitchToSpace(BrowserWindowInterface* current,
++                   const base::FilePath& profile_path);
++
++}  // namespace leto
++
++#endif  // CHROME_BROWSER_UI_VIEWS_LETO_SPACE_SWITCHER_H_
+--- a/chrome/browser/ui/browser_shortcuts/browser_shortcut_metadata.cc
++++ b/chrome/browser/ui/browser_shortcuts/browser_shortcut_metadata.cc
+@@ -295,6 +295,12 @@ std::optional<BrowserShortcutCommandLabe
+                                                     : IDS_DEV_TOOLS_ELEMENTS);
+     case IDC_VIEW_SOURCE:
+       return Label(IDS_VIEW_SOURCE);
++    // TODO(leto): Replace with localized strings once spaces graduate
++    // from prototype.
++    case IDC_LETO_NEXT_SPACE:
++      return Label(IDS_WILDCARD, u"Next space");
++    case IDC_LETO_PREVIOUS_SPACE:
++      return Label(IDS_WILDCARD, u"Previous space");
+   }
+ 
+   DCHECK(false) << "Missing browser shortcut label for command id "
+--- a/chrome/browser/profiles/profiles_state.cc
++++ b/chrome/browser/profiles/profiles_state.cc
+@@ -78,12 +78,12 @@ void RegisterPrefs(PrefRegistrySimple* r
+   registry->RegisterListPref(prefs::kProfilesDeleted);
+ 
+   // Preferences about the user manager.
+-  registry->RegisterBooleanPref(prefs::kBrowserGuestModeEnabled, true);
++  registry->RegisterBooleanPref(prefs::kBrowserGuestModeEnabled, false);
+   registry->RegisterBooleanPref(prefs::kBrowserGuestModeEnforced, false);
+   registry->RegisterBooleanPref(prefs::kBrowserAddPersonEnabled, true);
+   registry->RegisterBooleanPref(prefs::kForceBrowserSignin, false);
+   registry->RegisterBooleanPref(prefs::kBrowserShowProfilePickerOnStartup,
+-                                true);
++                                false);
+   registry->RegisterIntegerPref(
+       prefs::kBrowserProfilePickerAvailabilityOnStartup,
+       static_cast<int>(ProfilePicker::AvailabilityOnStartup::kEnabled));
+--- a/chrome/browser/ui/tabs/tab_strip_prefs.cc
++++ b/chrome/browser/ui/tabs/tab_strip_prefs.cc
+@@ -33,7 +33,7 @@ void RegisterProfilePrefs(user_prefs::Pr
+                                 kVerticalTabStripDefaultUncollapsedWidth);
+ 
+   registry->RegisterIntegerPref(prefs::kHeliumLayout,
+-                                std::to_underlying(HeliumLayoutType::kClassic));
++                                std::to_underlying(HeliumLayoutType::kVertical));
+   registry->RegisterBooleanPref(prefs::kHeliumVerticalRightAligned, false);
+   registry->RegisterBooleanPref(prefs::kHeliumZenMode, false);
+   registry->RegisterBooleanPref(prefs::kHeliumZenModeSidebarPinned, false);
+--- a/chrome/browser/ui/views/app_menu/profile_dynamic_menu.cc
++++ b/chrome/browser/ui/views/app_menu/profile_dynamic_menu.cc
+@@ -65,6 +65,10 @@
+ #include "ui/native_theme/native_theme.h"
+ #include "ui/views/widget/widget.h"
+ 
++#if BUILDFLAG(IS_MAC)
++#include "chrome/browser/ui/views/leto/space_switcher.h"
++#endif
++
+ #if !BUILDFLAG(IS_CHROMEOS)
+ #include "chrome/browser/ui/webui/signin/signin_ui_error.h"
+ #include "chrome/browser/ui/webui/signin/signin_utils_desktop.h"
+@@ -420,13 +424,23 @@ void ProfileDynamicMenu::BuildOtherProfi
+         builder.SetText(truncated_name)
+             .SetImage(avatar_model)
+             .SetInvokeActionCallback(base::BindRepeating(
+-                [](base::FilePath profile_path, actions::ActionItem* item,
++                [](base::WeakPtr<BrowserWindowInterface> browser,
++                   base::FilePath profile_path, actions::ActionItem* item,
+                    actions::ActionInvocationContext context) {
++#if BUILDFLAG(IS_MAC)
++                  // Profiles are spaces: show the selected one in place of
++                  // this window.
++                  if (browser) {
++                    leto::SwitchToSpace(browser.get(), profile_path);
++                    return;
++                  }
++#endif
+                   // Switching profiles opens or activates a browser window for
+                   // that profile.
+                   profiles::SwitchToProfile(profile_path,
+                                             /*always_create=*/false);
+                 },
++                browser_window_interface_->GetWeakPtr(),
+                 profile_entry->GetPath()))
+             .SetProperty(AppMenuActionItem::kContainerColorKey,
+                          ui::kColorMenuBackground);
+--- /dev/null
++++ b/chrome/browser/ui/views/leto/space_switcher_mac.h
+@@ -0,0 +1,28 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_VIEWS_LETO_SPACE_SWITCHER_MAC_H_
++#define CHROME_BROWSER_UI_VIEWS_LETO_SPACE_SWITCHER_MAC_H_
++
++#include "base/functional/callback_forward.h"
++
++class BrowserWindow;
++
++namespace gfx {
++class Rect;
++}  // namespace gfx
++
++namespace leto::internal {
++
++// Places `to` at `bounds` directly behind `from`, waits for `to` to draw its
++// first frame, then fades `from` out to reveal it. `hide_from` runs once the
++// fade has finished and must hide `from`.
++void CrossfadeToWindow(BrowserWindow* from,
++                       BrowserWindow* to,
++                       const gfx::Rect& bounds,
++                       base::OnceClosure hide_from);
++
++}  // namespace leto::internal
++
++#endif  // CHROME_BROWSER_UI_VIEWS_LETO_SPACE_SWITCHER_MAC_H_
+--- /dev/null
++++ b/chrome/browser/ui/views/leto/space_switcher_mac.mm
+@@ -0,0 +1,88 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/views/leto/space_switcher_mac.h"
++
++#import <AppKit/AppKit.h>
++#import <QuartzCore/QuartzCore.h>
++
++#include <utility>
++
++#include "base/functional/callback.h"
++#include "chrome/browser/ui/browser_window.h"
++#include "ui/gfx/geometry/rect.h"
++#include "ui/gfx/native_ui_types.h"
++
++namespace leto::internal {
++
++namespace {
++
++constexpr NSTimeInterval kFadeDuration = 0.07;
++
++// How often to check whether the revealed window has drawn, and how many
++// checks to make before revealing it anyway (about 200ms).
++constexpr int64_t kFramePollIntervalNs = 8 * NSEC_PER_MSEC;
++constexpr int kMaxFramePolls = 25;
++
++void FadeOutAndHide(NSWindow* from, base::OnceClosure hide_from) {
++  __block base::OnceClosure done = std::move(hide_from);
++  [NSAnimationContext
++      runAnimationGroup:^(NSAnimationContext* context) {
++        context.duration = kFadeDuration;
++        context.timingFunction = [CAMediaTimingFunction
++            functionWithName:kCAMediaTimingFunctionEaseOut];
++        from.animator.alphaValue = 0.0;
++      }
++      completionHandler:^{
++        std::move(done).Run();
++        // The window is hidden now; restore its opacity so that it shows
++        // normally when its space is selected again.
++        from.alphaValue = 1.0;
++      }];
++}
++
++// Chromium keeps a re-shown window at zero alpha until its first compositor
++// frame arrives. Wait for that before fading, so that the desktop never shows
++// through between the two windows.
++void FadeOnceDrawn(NSWindow* from,
++                   NSWindow* to,
++                   base::OnceClosure hide_from,
++                   int polls_left) {
++  if (to.alphaValue > 0.0 || polls_left == 0) {
++    FadeOutAndHide(from, std::move(hide_from));
++    return;
++  }
++  __block base::OnceClosure pending = std::move(hide_from);
++  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, kFramePollIntervalNs),
++                 dispatch_get_main_queue(), ^{
++                   FadeOnceDrawn(from, to, std::move(pending), polls_left - 1);
++                 });
++}
++
++}  // namespace
++
++void CrossfadeToWindow(BrowserWindow* from,
++                       BrowserWindow* to,
++                       const gfx::Rect& bounds,
++                       base::OnceClosure hide_from) {
++  NSWindow* from_window = from->GetNativeWindow().GetNativeNSWindow();
++  NSWindow* to_window = to->GetNativeWindow().GetNativeNSWindow();
++
++  to->SetBounds(bounds);
++  to->Show();
++
++  // Full screen windows each live in their own macOS space, so there is
++  // nothing to fade between.
++  if (!from_window || !to_window || from->IsFullscreen() ||
++      to->IsFullscreen()) {
++    std::move(hide_from).Run();
++    return;
++  }
++
++  // Keep `to` focused but behind `from` until `from` has faded away.
++  [to_window orderWindow:NSWindowBelow relativeTo:from_window.windowNumber];
++  FadeOnceDrawn(from_window, to_window, std::move(hide_from), kMaxFramePolls);
++}
++
++}  // namespace leto::internal
+--- a/chrome/browser/ui/views/profiles/profile_menu_view.cc
++++ b/chrome/browser/ui/views/profiles/profile_menu_view.cc
+@@ -63,6 +63,7 @@
+ #include "chrome/browser/ui/user_education/browser_user_education_interface.h"
+ #include "chrome/browser/ui/views/color_provider_browser_helper.h"
+ #include "chrome/browser/ui/views/controls/hover_button.h"
++#include "chrome/browser/ui/views/leto/space_switcher.h"
+ #include "chrome/browser/ui/views/profiles/avatar_badge_view.h"
+ #include "chrome/browser/ui/web_applications/app_browser_controller.h"
+ #include "chrome/browser/ui/webui/signin/signin_ui_error.h"
+@@ -435,6 +436,10 @@ void ProfileMenuView::OnOtherProfileSele
+ 
+   if (!web_app::AppBrowserController::IsWebApp(&browser())) {
+     GetWidget()->CloseWithReason(views::Widget::ClosedReason::kUnspecified);
++#if BUILDFLAG(IS_MAC)
++    // Profiles are spaces: show the selected one in place of this window.
++    leto::SwitchToSpace(&browser(), profile_path);
++#else
+     // Switch to the selected profile and launch a HaTS survey for the
+     // associated non-webapp browser.
+     profiles::SwitchToProfile(
+@@ -447,6 +452,7 @@ void ProfileMenuView::OnOtherProfileSele
+               kHatsSurveyTriggerIdentitySwitchProfileFromProfileMenu,
+               browser->GetProfile());
+         }));
++#endif
+   } else {
+     // Open the same web app for another profile.
+     // On non-macOS the only allowlisted case is PasswordManager WebApp, which
+--- a/chrome/browser/ui/views/frame/vertical_tab_strip_region_view.cc
++++ b/chrome/browser/ui/views/frame/vertical_tab_strip_region_view.cc
+@@ -191,7 +191,9 @@ VerticalTabStripRegionView::VerticalTabS
+       kExpandOnHoverShadowElevation, kExpandOnHoverShadowAlpha));
+   shadow_frame_->SetProperty(views::kViewIgnoredByLayoutKey, true);
+ 
+-  if (base::FeatureList::IsEnabled(features::kTabGroupsFocusing)) {
++  // On macOS the swipe also switches spaces.
++  if (BUILDFLAG(IS_MAC) ||
++      base::FeatureList::IsEnabled(features::kTabGroupsFocusing)) {
+     focus_swipe_controller_ =
+         std::make_unique<VerticalTabStripFocusSwipeController>(this);
+   }
+--- /dev/null
++++ b/chrome/browser/ui/views/leto/space_bar_view.cc
+@@ -0,0 +1,151 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/views/leto/space_bar_view.h"
++
++#include <memory>
++
++#include "base/files/file_path.h"
++#include "base/functional/bind.h"
++#include "base/memory/weak_ptr.h"
++#include "chrome/browser/browser_process.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/profiles/profile_attributes_entry.h"
++#include "chrome/browser/profiles/profile_avatar_icon_util.h"
++#include "chrome/browser/profiles/profile_manager.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/color/chrome_color_id.h"
++#include "chrome/browser/ui/profiles/profile_colors_util.h"
++#include "chrome/browser/ui/views/leto/space_switcher.h"
++#include "ui/base/metadata/metadata_impl_macros.h"
++#include "ui/base/models/image_model.h"
++#include "ui/color/color_provider.h"
++#include "ui/compositor/layer.h"
++#include "ui/gfx/geometry/insets.h"
++#include "ui/views/accessibility/view_accessibility.h"
++#include "ui/views/border.h"
++#include "ui/views/controls/button/image_button.h"
++#include "ui/views/layout/box_layout.h"
++
++namespace leto {
++
++namespace {
++
++constexpr int kIconSize = 16;
++constexpr int kRingThickness = 2;
++constexpr int kRingGap = 1;
++constexpr int kSpacing = 6;
++constexpr float kInactiveOpacity = 0.45f;
++
++ProfileAttributesStorage& GetStorage() {
++  return g_browser_process->profile_manager()->GetProfileAttributesStorage();
++}
++
++}  // namespace
++
++SpaceBarView::SpaceBarView(BrowserWindowInterface* browser)
++    : browser_(browser) {
++  auto* layout = SetLayoutManager(std::make_unique<views::BoxLayout>(
++      views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), kSpacing));
++  layout->set_cross_axis_alignment(
++      views::BoxLayout::CrossAxisAlignment::kCenter);
++  storage_observation_.Observe(&GetStorage());
++}
++
++SpaceBarView::~SpaceBarView() = default;
++
++void SpaceBarView::OnThemeChanged() {
++  views::View::OnThemeChanged();
++  Rebuild();
++}
++
++void SpaceBarView::OnProfileAdded(const base::FilePath&) {
++  Rebuild();
++}
++
++void SpaceBarView::OnProfileWasRemoved(const base::FilePath&,
++                                       const std::u16string&) {
++  Rebuild();
++}
++
++void SpaceBarView::OnProfileNameChanged(const base::FilePath&,
++                                        const std::u16string&) {
++  Rebuild();
++}
++
++void SpaceBarView::OnProfileAvatarChanged(const base::FilePath&) {
++  Rebuild();
++}
++
++void SpaceBarView::OnProfileHighResAvatarLoaded(const base::FilePath&) {
++  Rebuild();
++}
++
++void SpaceBarView::OnProfileIsOmittedChanged(const base::FilePath&) {
++  Rebuild();
++}
++
++void SpaceBarView::Rebuild() {
++  const ui::ColorProvider* color_provider = GetColorProvider();
++  if (!color_provider) {
++    return;
++  }
++
++  RemoveAllChildViews();
++
++  const base::FilePath& current_path =
++      browser_->GetProfile()->GetOriginalProfile()->GetPath();
++  const profiles::PlaceholderAvatarIconParams icon_params =
++      GetPlaceholderAvatarIconParamsVisibleAgainstColor(
++          color_provider->GetColor(kColorToolbar));
++  const int ring_inset = kRingThickness + kRingGap;
++  const int button_size = kIconSize + 2 * ring_inset;
++
++  for (ProfileAttributesEntry* entry :
++       GetStorage().GetAllProfilesAttributesSortedForDisplay()) {
++    if (entry->IsOmitted()) {
++      continue;
++    }
++
++    const base::FilePath profile_path = entry->GetPath();
++    auto button = std::make_unique<views::ImageButton>(base::BindRepeating(
++        [](base::WeakPtr<BrowserWindowInterface> browser,
++           const base::FilePath& path) {
++          if (browser) {
++            SwitchToSpace(browser.get(), path);
++          }
++        },
++        browser_->GetWeakPtr(), profile_path));
++
++    button->SetImageModel(
++        views::Button::STATE_NORMAL,
++        ui::ImageModel::FromImage(profiles::GetSizedAvatarIcon(
++            entry->GetAvatarIcon(kIconSize, /*use_high_res_file=*/true,
++                                 icon_params),
++            kIconSize, kIconSize, profiles::SHAPE_CIRCLE)));
++    button->SetImageHorizontalAlignment(views::ImageButton::ALIGN_CENTER);
++    button->SetImageVerticalAlignment(views::ImageButton::ALIGN_MIDDLE);
++    button->SetPreferredSize(gfx::Size(button_size, button_size));
++    button->SetTooltipText(entry->GetName());
++    button->GetViewAccessibility().SetName(entry->GetName());
++
++    button->SetPaintToLayer();
++    button->layer()->SetFillsBoundsOpaquely(false);
++    if (profile_path == current_path) {
++      button->SetBorder(views::CreateRoundedRectBorder(
++          kRingThickness, button_size / 2.0f, kColorToolbarButtonIcon));
++    } else {
++      button->layer()->SetOpacity(kInactiveOpacity);
++    }
++
++    AddChildView(std::move(button));
++  }
++
++  PreferredSizeChanged();
++}
++
++BEGIN_METADATA(SpaceBarView)
++END_METADATA
++
++}  // namespace leto
+--- /dev/null
++++ b/chrome/browser/ui/views/leto/space_bar_view.h
+@@ -0,0 +1,62 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_VIEWS_LETO_SPACE_BAR_VIEW_H_
++#define CHROME_BROWSER_UI_VIEWS_LETO_SPACE_BAR_VIEW_H_
++
++#include <string>
++
++#include "base/memory/raw_ptr.h"
++#include "base/scoped_observation.h"
++#include "chrome/browser/profiles/profile_attributes_storage.h"
++#include "chrome/browser/profiles/profile_attributes_storage_observer.h"
++#include "ui/base/metadata/metadata_header_macros.h"
++#include "ui/views/view.h"
++
++class BrowserWindowInterface;
++
++namespace base {
++class FilePath;
++}  // namespace base
++
++namespace leto {
++
++// A row of space icons for the bottom of the vertical tab strip. The space of
++// this window is highlighted, and clicking another one switches to it.
++class SpaceBarView : public views::View,
++                     public ProfileAttributesStorage::Observer {
++  METADATA_HEADER(SpaceBarView, views::View)
++
++ public:
++  explicit SpaceBarView(BrowserWindowInterface* browser);
++  SpaceBarView(const SpaceBarView&) = delete;
++  SpaceBarView& operator=(const SpaceBarView&) = delete;
++  ~SpaceBarView() override;
++
++  // views::View:
++  void OnThemeChanged() override;
++
++  // ProfileAttributesStorage::Observer:
++  void OnProfileAdded(const base::FilePath& profile_path) override;
++  void OnProfileWasRemoved(const base::FilePath& profile_path,
++                           const std::u16string& profile_name) override;
++  void OnProfileNameChanged(const base::FilePath& profile_path,
++                            const std::u16string& old_profile_name) override;
++  void OnProfileAvatarChanged(const base::FilePath& profile_path) override;
++  void OnProfileHighResAvatarLoaded(
++      const base::FilePath& profile_path) override;
++  void OnProfileIsOmittedChanged(const base::FilePath& profile_path) override;
++
++ private:
++  void Rebuild();
++
++  raw_ptr<BrowserWindowInterface> browser_;
++  base::ScopedObservation<ProfileAttributesStorage,
++                          ProfileAttributesStorage::Observer>
++      storage_observation_{this};
++};
++
++}  // namespace leto
++
++#endif  // CHROME_BROWSER_UI_VIEWS_LETO_SPACE_BAR_VIEW_H_
+--- a/chrome/browser/ui/views/tabs/vertical/vertical_tab_strip_bottom_container.cc
++++ b/chrome/browser/ui/views/tabs/vertical/vertical_tab_strip_bottom_container.cc
+@@ -10,6 +10,12 @@
+ #include "chrome/browser/ui/views/frame/browser_view.h"
+ #include "chrome/browser/ui/views/frame/vertical_tab_strip_region_view.h"
+ #include "chrome/browser/ui/views/tabs/vertical/vertical_new_tab_button.h"
++#include "build/build_config.h"
++#include "ui/gfx/geometry/insets.h"
++
++#if BUILDFLAG(IS_MAC)
++#include "chrome/browser/ui/views/leto/space_bar_view.h"
++#endif
+ #include "ui/base/metadata/metadata_impl_macros.h"
+ #include "ui/views/view_class_properties.h"
+ 
+@@ -36,6 +42,20 @@ VerticalTabStripBottomContainer::Vertica
+ 
+   new_tab_button_ = AddChildView(std::move(new_tab_button));
+ 
++#if BUILDFLAG(IS_MAC)
++  // Spaces get their own row, pushed to the very bottom of the sidebar.
++  spacer_ = AddChildView(std::make_unique<views::View>());
++  spacer_->SetProperty(
++      views::kFlexBehaviorKey,
++      views::FlexSpecification(views::LayoutOrientation::kVertical,
++                               views::MinimumFlexSizeRule::kScaleToZero,
++                               views::MaximumFlexSizeRule::kUnbounded));
++  space_bar_ = AddChildView(std::make_unique<leto::SpaceBarView>(browser_));
++  space_bar_->SetProperty(views::kCrossAxisAlignmentKey,
++                          views::LayoutAlignment::kCenter);
++  space_bar_->SetProperty(views::kMarginsKey, gfx::Insets::VH(8, 0));
++#endif
++
+   OnCollapseStateChanged(state_controller->GetCollapseState());
+   collapsed_state_change_subscription_ =
+       state_controller->RegisterOnCollapseChanged(base::BindRepeating(
+@@ -49,7 +69,7 @@ VerticalTabStripBottomContainer::~Vertic
+ bool VerticalTabStripBottomContainer::IsPositionInWindowCaption(
+     const gfx::Point& point) {
+   for (views::View* child : children()) {
+-    if (!child->GetVisible()) {
++    if (!child->GetVisible() || child == spacer_) {
+       continue;
+     }
+     gfx::Point point_in_child = point;
+@@ -84,6 +104,20 @@ void VerticalTabStripBottomContainer::Up
+   auto orientation = collapsed ? views::LayoutOrientation::kVertical
+                                : views::LayoutOrientation::kHorizontal;
+ 
++  if (space_bar_) {
++    // Stack the new tab button above the space bar in every state, and only
++    // show the space bar when there is room for it.
++    space_bar_->SetVisible(!collapsed);
++    SetOrientation(views::LayoutOrientation::kVertical);
++    SetCrossAxisAlignment(views::LayoutAlignment::kStretch);
++    new_tab_button_->SetProperty(
++        views::kFlexBehaviorKey,
++        views::FlexSpecification(views::LayoutOrientation::kVertical,
++                                 views::MinimumFlexSizeRule::kPreferred,
++                                 views::MaximumFlexSizeRule::kPreferred));
++    return;
++  }
++
+   // Setting button's layout based on collapsed state
+   SetOrientation(orientation);
+   SetCrossAxisAlignment(collapsed ? views::LayoutAlignment::kStretch
+--- a/chrome/browser/ui/views/tabs/vertical/vertical_tab_strip_bottom_container.h
++++ b/chrome/browser/ui/views/tabs/vertical/vertical_tab_strip_bottom_container.h
+@@ -46,6 +46,8 @@ class VerticalTabStripBottomContainer :
+ 
+   raw_ptr<BrowserWindowInterface> browser_ = nullptr;
+   raw_ptr<VerticalNewTabButton> new_tab_button_ = nullptr;
++  raw_ptr<views::View> spacer_ = nullptr;
++  raw_ptr<views::View> space_bar_ = nullptr;
+   base::CallbackListSubscription collapsed_state_change_subscription_;
+   base::CallbackListSubscription new_tab_button_pressed_subscription_;
+ 
+--- a/chrome/browser/ui/views/tabs/vertical/vertical_tab_strip_focus_swipe_controller.cc
++++ b/chrome/browser/ui/views/tabs/vertical/vertical_tab_strip_focus_swipe_controller.cc
+@@ -12,6 +12,11 @@
+ #include "chrome/browser/ui/tabs/tab_strip_model.h"
+ #include "chrome/browser/ui/ui_features.h"
+ #include "chrome/browser/ui/views/frame/vertical_tab_strip_region_view.h"
++
++#if BUILDFLAG(IS_MAC)
++#include "chrome/browser/ui/views/frame/browser_view.h"
++#include "chrome/browser/ui/views/leto/space_switcher.h"
++#endif
+ #include "ui/events/event.h"
+ 
+ VerticalTabStripFocusSwipeController::VerticalTabStripFocusSwipeController(
+@@ -40,8 +45,7 @@ void VerticalTabStripFocusSwipeControlle
+ #elif BUILDFLAG(IS_MAC)
+ void VerticalTabStripFocusSwipeController::OnScrollEvent(
+     ui::ScrollEvent* event) {
+-  if (!base::FeatureList::IsEnabled(features::kTabGroupsFocusing) ||
+-      !region_view_ || region_view_->IsDragging()) {
++  if (!region_view_ || region_view_->IsDragging()) {
+     return;
+   }
+ 
+@@ -151,5 +155,15 @@ void VerticalTabStripFocusSwipeControlle
+     return;
+   }
+ 
++#if BUILDFLAG(IS_MAC)
++  if (!base::FeatureList::IsEnabled(features::kTabGroupsFocusing)) {
++    if (BrowserView* browser_view = BrowserView::GetBrowserViewForNativeWindow(
++            region_view_->GetWidget()->GetNativeWindow())) {
++      leto::SwitchSpace(browser_view->browser(), forward ? 1 : -1);
++    }
++    return;
++  }
++#endif
++
+   region_view_->tab_strip_model()->RotateFocusedGroup(forward);
+ }
+--- a/chrome/browser/profiles/profile_manager.cc
++++ b/chrome/browser/profiles/profile_manager.cc
+@@ -595,8 +595,25 @@ std::vector<Profile*> ProfileManager::Ge
+   std::vector<Profile*> to_return;
+   if (local_state->HasPrefPath(prefs::kProfilesLastActive)) {
+     // Make a copy because the list might change in the calls to GetProfile.
+-    const base::ListValue profile_list =
++    base::ListValue profile_list =
+         local_state->GetList(prefs::kProfilesLastActive).Clone();
++#if BUILDFLAG(IS_MAC)
++    // Profiles are spaces that share one window, so only reopen the space
++    // that was used last rather than a window for every profile.
++    const std::string& last_used =
++        local_state->GetString(prefs::kProfileLastUsed);
++    base::ListValue last_space;
++    for (const auto& entry : profile_list) {
++      if (entry.GetIfString() && *entry.GetIfString() == last_used) {
++        last_space.Append(entry.Clone());
++        break;
++      }
++    }
++    if (last_space.empty() && !profile_list.empty()) {
++      last_space.Append(profile_list.front().Clone());
++    }
++    profile_list = std::move(last_space);
++#endif
+     for (const auto& entry : profile_list) {
+       const std::string* profile_base_name = entry.GetIfString();
+       if (!profile_base_name || profile_base_name->empty() ||
+--- a/chrome/browser/ui/profiles/profile_picker.cc
++++ b/chrome/browser/ui/profiles/profile_picker.cc
+@@ -207,6 +207,11 @@ StartupProfileMode ProfilePicker::GetSta
+     return StartupProfileMode::kBrowserWindow;
+   }
+ 
++#if BUILDFLAG(IS_MAC)
++  // Profiles are spaces that share one window, so open the last used space
++  // directly instead of asking which profile to use.
++  return StartupProfileMode::kBrowserWindow;
++#else
+   bool pref_enabled = g_browser_process->local_state()->GetBoolean(
+       prefs::kBrowserShowProfilePickerOnStartup);
+   base::UmaHistogramBoolean("ProfilePicker.AskOnStartup", pref_enabled);
+@@ -214,6 +219,7 @@ StartupProfileMode ProfilePicker::GetSta
+     return StartupProfileMode::kProfilePicker;
+   }
+   return StartupProfileMode::kBrowserWindow;
++#endif
+ }
+ 
+ // static
+--- a/chrome/browser/ui/views/frame/browser_native_widget_mac.mm
++++ b/chrome/browser/ui/views/frame/browser_native_widget_mac.mm
+@@ -623,7 +623,9 @@ void BrowserNativeWidgetMac::PopulateCre
+   } else {
+     params->window_class = remote_cocoa::mojom::WindowClass::kDefault;
+   }
+-  params->animation_enabled = true;
++  // Tabbed windows are spaces that get swapped in place, so they must appear
++  // without the zoom-in animation that macOS plays for document windows.
++  params->animation_enabled = !browser_view_->GetIsNormalType();
+ }
+ 
+ NativeWidgetMacNSWindow* BrowserNativeWidgetMac::CreateNSWindow(

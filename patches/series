@@ -24,3 +24,12 @@ helium/macos/lockdown-mode-imageio.patch
 helium/macos/disable-chromium-immersive-fullscreen.patch
 helium/macos/helium-immersive-fullscreen.patch
 helium/macos/fix-history-swiper-lifetime.patch
+leto/spaces.patch
+leto/global-appearance.patch
+leto/emoji-avatars.patch
+leto/fix-bang-id-collision.patch
+leto/arc-sidebar-toolbar.patch
+leto/arc-command-bar.patch
+leto/site-controls.patch
+leto/sidebar-window-controls.patch
+leto/arc-defaults.patch
