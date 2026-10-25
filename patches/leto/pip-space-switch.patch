@@ -1,0 +1,71 @@
+--- a/chrome/browser/picture_in_picture/auto_picture_in_picture_tab_helper.cc
++++ b/chrome/browser/picture_in_picture/auto_picture_in_picture_tab_helper.cc
+@@ -28,6 +28,8 @@
+ #include "content/public/browser/media_session.h"
+ #include "content/public/browser/media_session_service.h"
+ #include "content/public/browser/render_frame_host.h"
++#include "content/public/browser/visibility.h"
++#include "content/public/browser/web_contents.h"
+ #include "media/base/media_switches.h"
+ #include "mojo/public/cpp/bindings/remote.h"
+ #include "third_party/blink/public/common/features.h"
+@@ -400,7 +402,10 @@ void AutoPictureInPictureTabHelper::Medi
+     // If the tab is activated and unoccluded by the time auto
+     // picture-in-picture fires, we should immediately close the auto
+     // picture-in-picture.
++    // Leto: a tab can stay the active one in a window that is hidden, as
++    // when its space is switched away from; it isn't on screen then.
+     if (tab_observer_helper_->IsTabActivated() &&
++        web_contents()->GetVisibility() == content::Visibility::VISIBLE &&
+         (!window_occlusion_helper_ ||
+          window_occlusion_helper_->GetOcclusionState() ==
+              OcclusionState::kVisible)) {
+--- a/chrome/browser/ui/views/leto/space_switcher.cc
++++ b/chrome/browser/ui/views/leto/space_switcher.cc
+@@ -10,6 +10,8 @@
+ #include "base/files/file_path.h"
+ #include "base/functional/bind.h"
+ #include "base/memory/weak_ptr.h"
++#include "base/task/sequenced_task_runner.h"
++#include "base/time/time.h"
+ #include "chrome/browser/browser_process.h"
+ #include "chrome/browser/picture_in_picture/auto_picture_in_picture_tab_helper.h"
+ #include "chrome/browser/profiles/profile.h"
+@@ -31,6 +33,10 @@ namespace leto {
+ 
+ namespace {
+ 
++// How long after a space's window is hidden its video pops out, so that its
++// page has been marked as hidden by then.
++constexpr base::TimeDelta kPictureInPictureDelay = base::Milliseconds(150);
++
+ // Tells the active tab of `browser` that it is shown or hidden along with its
+ // space, so a playing video moves into picture-in-picture as its space is left
+ // and back out when it returns, as it does on tab switches.
+@@ -68,7 +74,6 @@ void PresentInPlace(base::WeakPtr<Browse
+   // Close the incoming space's picture-in-picture before the outgoing space
+   // opens its own.
+   SetActiveTabShown(target, /*shown=*/true);
+-  SetActiveTabShown(source.get(), /*shown=*/false);
+ 
+   internal::CrossfadeToWindow(
+       source_window, target_window, bounds,
+@@ -81,6 +86,18 @@ void PresentInPlace(base::WeakPtr<Browse
+                     BrowserWindow::FromBrowser(source.get())) {
+               window->Hide();
+             }
++            // Once its window is hidden and its page no longer counts as
++            // visible, a video playing in the outgoing space pops out.
++            base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
++                FROM_HERE,
++                base::BindOnce(
++                    [](base::WeakPtr<BrowserWindowInterface> source) {
++                      if (source) {
++                        SetActiveTabShown(source.get(), /*shown=*/false);
++                      }
++                    },
++                    source),
++                kPictureInPictureDelay);
+           },
+           source));
+ }

@@ -38,3 +38,5 @@ leto/site-controls-icons.patch
 leto/fix-sidebar-label-crash.patch
 leto/sidebar-pill-icons.patch
 leto/arc-picture-in-picture.patch
+leto/pip-space-switch.patch
+leto/pip-player.patch
