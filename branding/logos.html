@@ -143,122 +143,108 @@
 -->
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <defs>
-    <!-- macOS continuous-corner squircle on a 100 grid. -->
-    <path id="squircle" d="M50 0C79 0 89 0 94.5 5.5S100 21 100 50 100 89 94.5 94.5 79 100 50 100 11 100 5.5 94.5 0 79 0 50 0 11 5.5 5.5 21 0 50 0Z"/>
-    <clipPath id="squircle-clip"><use href="#squircle"/></clipPath>
-
-    <!-- 1. Twins: Apollo's sun and Artemis' moon. -->
-    <linearGradient id="t-bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#2b2163"/><stop offset="1" stop-color="#5a3fb0"/>
-    </linearGradient>
-    <linearGradient id="t-sun" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#ffd27a"/><stop offset="1" stop-color="#ff7a59"/>
-    </linearGradient>
-    <linearGradient id="t-moon" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#c9d2ff"/>
-    </linearGradient>
-    <mask id="t-crescent">
-      <rect width="100" height="100" fill="#fff"/>
-      <circle cx="72" cy="35" r="15" fill="#000"/>
-    </mask>
-    <symbol id="logo-twins" viewBox="0 0 100 100">
-      <g clip-path="url(#squircle-clip)">
-        <rect width="100" height="100" fill="url(#t-bg)"/>
-        <circle cx="50" cy="50" r="38" fill="#fff" opacity=".04"/>
-        <circle cx="43" cy="56" r="21" fill="url(#t-sun)"/>
-        <circle cx="62" cy="40" r="16" fill="url(#t-moon)" mask="url(#t-crescent)"/>
-      </g>
-    </symbol>
-
-    <!-- 2. Sidebar: the window Leto is built around. -->
-    <linearGradient id="s-bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#fbfaf8"/><stop offset="1" stop-color="#e7e3dd"/>
-    </linearGradient>
-    <linearGradient id="s-bar" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#7a6bff"/><stop offset="1" stop-color="#3f2fd6"/>
-    </linearGradient>
-    <symbol id="logo-sidebar" viewBox="0 0 100 100">
-      <g clip-path="url(#squircle-clip)">
-        <rect width="100" height="100" fill="url(#s-bg)"/>
-        <rect x="20" y="22" width="60" height="56" rx="11" fill="#fff" stroke="#d9d4cc" stroke-width="1.2"/>
-        <rect x="24" y="26" width="18" height="48" rx="7" fill="url(#s-bar)"/>
-        <circle cx="33" cy="66" r="2.2" fill="#fff"/>
-        <rect x="28.5" y="31" width="9" height="3" rx="1.5" fill="#fff" opacity=".9"/>
-        <rect x="28.5" y="37" width="9" height="3" rx="1.5" fill="#fff" opacity=".55"/>
-        <rect x="28.5" y="43" width="9" height="3" rx="1.5" fill="#fff" opacity=".55"/>
-        <rect x="47" y="30" width="28" height="40" rx="6" fill="#f2efea"/>
-      </g>
-    </symbol>
-
-    <!-- 3. Spaces: profiles stacked in one window. -->
-    <linearGradient id="p-bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#16161a"/><stop offset="1" stop-color="#2a2a33"/>
-    </linearGradient>
-    <linearGradient id="p-a" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#5ee1c6"/><stop offset="1" stop-color="#2aa7a0"/>
-    </linearGradient>
-    <linearGradient id="p-b" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#a89bff"/><stop offset="1" stop-color="#6b5cff"/>
-    </linearGradient>
-    <linearGradient id="p-c" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#ffb08a"/><stop offset="1" stop-color="#ff6f61"/>
-    </linearGradient>
-    <symbol id="logo-spaces" viewBox="0 0 100 100">
-      <g clip-path="url(#squircle-clip)">
-        <rect width="100" height="100" fill="url(#p-bg)"/>
-        <rect x="34" y="18" width="44" height="44" rx="12" fill="url(#p-a)" opacity=".9"/>
-        <rect x="28" y="28" width="44" height="44" rx="12" fill="url(#p-b)" opacity=".95"/>
-        <rect x="22" y="38" width="44" height="44" rx="12" fill="url(#p-c)"/>
-        <rect x="22" y="38" width="44" height="44" rx="12" fill="none" stroke="#fff" stroke-opacity=".25"/>
-      </g>
-    </symbol>
-
-    <!-- 4. Monogram: an L drawn as sidebar and page edge. -->
-    <linearGradient id="m-bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#fff4e6"/><stop offset="1" stop-color="#ffe0c2"/>
-    </linearGradient>
-    <linearGradient id="m-l" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#2a2340"/><stop offset="1" stop-color="#14111f"/>
-    </linearGradient>
-    <symbol id="logo-monogram" viewBox="0 0 100 100">
-      <g clip-path="url(#squircle-clip)">
-        <rect width="100" height="100" fill="url(#m-bg)"/>
-        <path d="M30 22a7 7 0 0 1 7-7h4a7 7 0 0 1 7 7v42h21a7 7 0 0 1 7 7v4a7 7 0 0 1-7 7H37a7 7 0 0 1-7-7Z" fill="url(#m-l)"/>
-        <circle cx="66" cy="34" r="10" fill="#ff7a59"/>
-      </g>
-    </symbol>
-
-    <!-- 5. Eclipse: the sun and moon meeting. -->
-    <radialGradient id="e-glow" cx=".5" cy=".5" r=".5">
-      <stop offset=".62" stop-color="#ffb46b" stop-opacity="0"/>
-      <stop offset=".72" stop-color="#ffcf8f" stop-opacity=".95"/>
-      <stop offset=".8" stop-color="#ff8a5c" stop-opacity=".55"/>
-      <stop offset="1" stop-color="#ff5f6d" stop-opacity="0"/>
-    </radialGradient>
-    <symbol id="logo-eclipse" viewBox="0 0 100 100">
-      <g clip-path="url(#squircle-clip)">
-        <rect width="100" height="100" fill="#0b0b10"/>
-        <circle cx="50" cy="50" r="40" fill="url(#e-glow)"/>
-        <circle cx="50" cy="50" r="26.5" fill="#0b0b10"/>
-        <circle cx="61" cy="40" r="3" fill="#fff4e0"/>
-      </g>
-    </symbol>
-
-    <!-- 6. Delos: the island where Leto found a home, at sunrise. -->
-    <linearGradient id="d-sky" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#b9a7ff"/><stop offset=".55" stop-color="#ffc3a6"/><stop offset="1" stop-color="#ffd9b8"/>
-    </linearGradient>
-    <linearGradient id="d-sea" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#5c4bd6"/><stop offset="1" stop-color="#2d2378"/>
-    </linearGradient>
-    <symbol id="logo-delos" viewBox="0 0 100 100">
-      <g clip-path="url(#squircle-clip)">
-        <rect width="100" height="100" fill="url(#d-sky)"/>
-        <circle cx="50" cy="60" r="20" fill="#fff6ec"/>
-        <rect y="58" width="100" height="42" fill="url(#d-sea)"/>
-        <path d="M24 70h52M32 78h36M40 86h20" stroke="#fff" stroke-opacity=".55" stroke-width="2.6" stroke-linecap="round"/>
-      </g>
-    </symbol>
+    <!-- macOS continuous-corner icon shape (a superellipse) on a 1024 grid, with
+         the glass shared by every icon: an edge highlight, a soft sheen from the
+         top left, and the drop shadow under each mark. -->
+    <path id="sq" d="M1024.0 512.0 L1023.9 631.2 L1023.7 669.3 L1023.4 697.0 L1022.9 719.5 L1022.2 738.8 L1021.5 755.8 L1020.6 771.1 L1019.5 785.2 L1018.3 798.1 L1016.9 810.2 L1015.5 821.5 L1013.8 832.1 L1012.0 842.1 L1010.1 851.6 L1008.0 860.7 L1005.8 869.3 L1003.4 877.5 L1000.9 885.3 L998.2 892.8 L995.4 900.0 L992.4 906.9 L989.2 913.5 L985.9 919.9 L982.4 926.0 L978.7 931.8 L974.9 937.4 L970.9 942.8 L966.7 948.0 L962.3 953.0 L957.7 957.7 L953.0 962.3 L948.0 966.7 L942.8 970.9 L937.4 974.9 L931.8 978.7 L926.0 982.4 L919.9 985.9 L913.5 989.2 L906.9 992.4 L900.0 995.4 L892.8 998.2 L885.3 1000.9 L877.5 1003.4 L869.3 1005.8 L860.7 1008.0 L851.6 1010.1 L842.1 1012.0 L832.1 1013.8 L821.5 1015.5 L810.2 1016.9 L798.1 1018.3 L785.2 1019.5 L771.1 1020.6 L755.8 1021.5 L738.8 1022.2 L719.5 1022.9 L697.0 1023.4 L669.3 1023.7 L631.2 1023.9 L512.0 1024.0 L392.8 1023.9 L354.7 1023.7 L327.0 1023.4 L304.5 1022.9 L285.2 1022.2 L268.2 1021.5 L252.9 1020.6 L238.8 1019.5 L225.9 1018.3 L213.8 1016.9 L202.5 1015.5 L191.9 1013.8 L181.9 1012.0 L172.4 1010.1 L163.3 1008.0 L154.7 1005.8 L146.5 1003.4 L138.7 1000.9 L131.2 998.2 L124.0 995.4 L117.1 992.4 L110.5 989.2 L104.1 985.9 L98.0 982.4 L92.2 978.7 L86.6 974.9 L81.2 970.9 L76.0 966.7 L71.0 962.3 L66.3 957.7 L61.7 953.0 L57.3 948.0 L53.1 942.8 L49.1 937.4 L45.3 931.8 L41.6 926.0 L38.1 919.9 L34.8 913.5 L31.6 906.9 L28.6 900.0 L25.8 892.8 L23.1 885.3 L20.6 877.5 L18.2 869.3 L16.0 860.7 L13.9 851.6 L12.0 842.1 L10.2 832.1 L8.5 821.5 L7.1 810.2 L5.7 798.1 L4.5 785.2 L3.4 771.1 L2.5 755.8 L1.8 738.8 L1.1 719.5 L0.6 697.0 L0.3 669.3 L0.1 631.2 L0.0 512.0 L0.1 392.8 L0.3 354.7 L0.6 327.0 L1.1 304.5 L1.8 285.2 L2.5 268.2 L3.4 252.9 L4.5 238.8 L5.7 225.9 L7.1 213.8 L8.5 202.5 L10.2 191.9 L12.0 181.9 L13.9 172.4 L16.0 163.3 L18.2 154.7 L20.6 146.5 L23.1 138.7 L25.8 131.2 L28.6 124.0 L31.6 117.1 L34.8 110.5 L38.1 104.1 L41.6 98.0 L45.3 92.2 L49.1 86.6 L53.1 81.2 L57.3 76.0 L61.7 71.0 L66.3 66.3 L71.0 61.7 L76.0 57.3 L81.2 53.1 L86.6 49.1 L92.2 45.3 L98.0 41.6 L104.1 38.1 L110.5 34.8 L117.1 31.6 L124.0 28.6 L131.2 25.8 L138.7 23.1 L146.5 20.6 L154.7 18.2 L163.3 16.0 L172.4 13.9 L181.9 12.0 L191.9 10.2 L202.5 8.5 L213.8 7.1 L225.9 5.7 L238.8 4.5 L252.9 3.4 L268.2 2.5 L285.2 1.8 L304.5 1.1 L327.0 0.6 L354.7 0.3 L392.8 0.1 L512.0 0.0 L631.2 0.1 L669.3 0.3 L697.0 0.6 L719.5 1.1 L738.8 1.8 L755.8 2.5 L771.1 3.4 L785.2 4.5 L798.1 5.7 L810.2 7.1 L821.5 8.5 L832.1 10.2 L842.1 12.0 L851.6 13.9 L860.7 16.0 L869.3 18.2 L877.5 20.6 L885.3 23.1 L892.8 25.8 L900.0 28.6 L906.9 31.6 L913.5 34.8 L919.9 38.1 L926.0 41.6 L931.8 45.3 L937.4 49.1 L942.8 53.1 L948.0 57.3 L953.0 61.7 L957.7 66.3 L962.3 71.0 L966.7 76.0 L970.9 81.2 L974.9 86.6 L978.7 92.2 L982.4 98.0 L985.9 104.1 L989.2 110.5 L992.4 117.1 L995.4 124.0 L998.2 131.2 L1000.9 138.7 L1003.4 146.5 L1005.8 154.7 L1008.0 163.3 L1010.1 172.4 L1012.0 181.9 L1013.8 191.9 L1015.5 202.5 L1016.9 213.8 L1018.3 225.9 L1019.5 238.8 L1020.6 252.9 L1021.5 268.2 L1022.2 285.2 L1022.9 304.5 L1023.4 327.0 L1023.7 354.7 L1023.9 392.8Z"/>
+    <clipPath id="sqc"><use href="#sq"/></clipPath>
+    <linearGradient id="edge" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset=".35" stop-color="#fff" stop-opacity=".08"/><stop offset="1" stop-color="#fff" stop-opacity=".18"/></linearGradient>
+    <radialGradient id="sheen" cx=".28" cy=".18" r=".75"><stop offset="0" stop-color="#fff" stop-opacity=".22"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+    <filter id="drop" filterUnits="userSpaceOnUse" x="-100" y="-100" width="1224" height="1300"><feGaussianBlur in="SourceAlpha" stdDeviation="26"/><feOffset dy="30"/><feComponentTransfer><feFuncA type="linear" slope=".42"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <filter id="blur40" filterUnits="userSpaceOnUse" x="-200" y="-200" width="1424" height="1424"><feGaussianBlur stdDeviation="40"/></filter>
+    <filter id="blur12" filterUnits="userSpaceOnUse" x="-200" y="-200" width="1424" height="1424"><feGaussianBlur stdDeviation="12"/></filter>
+    <filter id="blur6" filterUnits="userSpaceOnUse" x="-200" y="-200" width="1424" height="1424"><feGaussianBlur stdDeviation="6"/></filter>
+    <symbol id="logo-orbs" viewBox="0 0 1024 1024">
+<defs>
+<linearGradient id="a-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#140f3a"/><stop offset="1" stop-color="#2d1670"/></linearGradient>
+<radialGradient id="a-warm" cx=".36" cy=".3" r=".8"><stop offset="0" stop-color="#fff3cf"/><stop offset=".3" stop-color="#ffbe55"/><stop offset=".7" stop-color="#ff6b3d"/><stop offset="1" stop-color="#c2304f"/></radialGradient>
+<radialGradient id="a-cool" cx=".38" cy=".3" r=".8"><stop offset="0" stop-color="#ffffff"/><stop offset=".3" stop-color="#cfd8ff"/><stop offset=".72" stop-color="#7f7cff"/><stop offset="1" stop-color="#4434c9"/></radialGradient>
+<radialGradient id="a-spec" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#fff" stop-opacity=".85"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+</defs>
+<g clip-path="url(#sqc)"><rect width="1024" height="1024" fill="url(#a-bg)"/>
+<circle cx="470" cy="560" r="300" fill="#ff7a45" opacity=".35" filter="url(#blur40)"/>
+<circle cx="600" cy="440" r="260" fill="#7b74ff" opacity=".35" filter="url(#blur40)"/>
+<g filter="url(#drop)">
+<circle cx="440" cy="575" r="250" fill="url(#a-warm)"/>
+<circle cx="610" cy="430" r="215" fill="url(#a-cool)" style="mix-blend-mode:screen"/>
+</g>
+<ellipse cx="360" cy="470" rx="95" ry="55" fill="url(#a-spec)" opacity=".55" transform="rotate(-35 360 470)"/>
+<ellipse cx="548" cy="345" rx="80" ry="45" fill="url(#a-spec)" opacity=".7" transform="rotate(-35 548 345)"/><rect width="1024" height="1024" fill="url(#sheen)"/></g><use href="#sq" fill="none" stroke="url(#edge)" stroke-width="5" clip-path="url(#sqc)"/></symbol>
+    <symbol id="logo-ribbon" viewBox="0 0 1024 1024">
+<defs>
+<linearGradient id="b-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fbfaff"/><stop offset="1" stop-color="#e6e0fb"/></linearGradient>
+<radialGradient id="b-tint" cx=".85" cy=".9" r=".7"><stop offset="0" stop-color="#ffd6e6" stop-opacity=".9"/><stop offset="1" stop-color="#ffd6e6" stop-opacity="0"/></radialGradient>
+<linearGradient id="b-l" gradientUnits="userSpaceOnUse" x1="360" y1="230" x2="790" y2="800"><stop offset="0" stop-color="#ff9a3c"/><stop offset=".5" stop-color="#ff3d77"/><stop offset="1" stop-color="#7a4dff"/></linearGradient>
+<linearGradient id="b-hi" gradientUnits="userSpaceOnUse" x1="300" y1="200" x2="700" y2="800"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset=".45" stop-color="#fff" stop-opacity="0"/></linearGradient>
+</defs>
+<g clip-path="url(#sqc)"><rect width="1024" height="1024" fill="url(#b-bg)"/><rect width="1024" height="1024" fill="url(#b-tint)"/>
+<g filter="url(#drop)"><path d="M400 270V585A175 175 0 0 0 575 760H770" fill="none" stroke="url(#b-l)" stroke-width="170" stroke-linecap="round" stroke-linejoin="round"/></g>
+<path d="M400 270V585A175 175 0 0 0 575 760H770" fill="none" stroke="url(#b-hi)" stroke-width="170" stroke-linecap="round"/>
+<rect width="1024" height="1024" fill="url(#sheen)"/></g><use href="#sq" fill="none" stroke="url(#edge)" stroke-width="5" clip-path="url(#sqc)"/></symbol>
+    <symbol id="logo-prism" viewBox="0 0 1024 1024">
+<defs>
+<linearGradient id="c-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#17151f"/><stop offset="1" stop-color="#25213a"/></linearGradient>
+<linearGradient id="c-v" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#63f2d8"/><stop offset="1" stop-color="#2f7cf6"/></linearGradient>
+<linearGradient id="c-h" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#ff5fa2"/><stop offset="1" stop-color="#ffa53c"/></linearGradient>
+<linearGradient id="c-hi" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".5"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/></linearGradient>
+</defs>
+<g clip-path="url(#sqc)"><rect width="1024" height="1024" fill="url(#c-bg)"/>
+<rect x="290" y="300" width="460" height="460" rx="120" fill="#6b5cff" opacity=".22" filter="url(#blur40)"/>
+<g filter="url(#drop)">
+<rect x="300" y="215" width="185" height="590" rx="92.5" fill="url(#c-v)" opacity=".95"/>
+<rect x="300" y="620" width="440" height="185" rx="92.5" fill="url(#c-h)" opacity=".95" style="mix-blend-mode:screen"/>
+</g>
+<rect x="312" y="226" width="161" height="300" rx="80" fill="url(#c-hi)" opacity=".7"/>
+<rect x="500" y="630" width="226" height="90" rx="45" fill="url(#c-hi)" opacity=".55"/>
+<rect width="1024" height="1024" fill="url(#sheen)"/></g><use href="#sq" fill="none" stroke="url(#edge)" stroke-width="5" clip-path="url(#sqc)"/></symbol>
+    <symbol id="logo-eclipse" viewBox="0 0 1024 1024">
+<defs>
+<radialGradient id="d-bg" cx=".5" cy=".42" r=".75"><stop offset="0" stop-color="#1d2148"/><stop offset="1" stop-color="#05060e"/></radialGradient>
+<radialGradient id="d-corona" cx=".5" cy=".5" r=".5"><stop offset=".64" stop-color="#ffd9a0" stop-opacity="0"/><stop offset=".7" stop-color="#fff1d6" stop-opacity="1"/><stop offset=".76" stop-color="#ffb46b" stop-opacity=".8"/><stop offset=".88" stop-color="#ff5f6d" stop-opacity=".25"/><stop offset="1" stop-color="#ff5f6d" stop-opacity="0"/></radialGradient>
+<radialGradient id="d-flare" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#fff"/><stop offset=".25" stop-color="#fff6e6" stop-opacity=".9"/><stop offset="1" stop-color="#ffcf8f" stop-opacity="0"/></radialGradient>
+</defs>
+<g clip-path="url(#sqc)"><rect width="1024" height="1024" fill="url(#d-bg)"/>
+<circle cx="512" cy="512" r="400" fill="url(#d-corona)" filter="url(#blur12)"/>
+<circle cx="512" cy="512" r="400" fill="url(#d-corona)"/>
+<circle cx="512" cy="512" r="276" fill="#05060e"/>
+<circle cx="707" cy="317" r="80" fill="url(#d-flare)"/>
+<path d="M707 237V397M627 317H787" stroke="#fff" stroke-width="5" stroke-linecap="round" opacity=".8" filter="url(#blur6)"/>
+<rect width="1024" height="1024" fill="url(#sheen)"/></g><use href="#sq" fill="none" stroke="url(#edge)" stroke-width="5" clip-path="url(#sqc)"/></symbol>
+    <symbol id="logo-palm" viewBox="0 0 1024 1024">
+<defs>
+<linearGradient id="e-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0f4a42"/><stop offset="1" stop-color="#062620"/></linearGradient>
+<linearGradient id="e-gold" gradientUnits="userSpaceOnUse" x1="350" y1="220" x2="700" y2="840"><stop offset="0" stop-color="#fff2b8"/><stop offset=".45" stop-color="#f6c453"/><stop offset="1" stop-color="#c47a1c"/></linearGradient>
+</defs>
+<g clip-path="url(#sqc)"><rect width="1024" height="1024" fill="url(#e-bg)"/>
+<circle cx="560" cy="430" r="300" fill="#f6c453" opacity=".12" filter="url(#blur40)"/>
+<g filter="url(#drop)" fill="url(#e-gold)">
+<path d="M501.5 736.2Q647.2 732.8 712.8 602.6Q593.1 647.2 501.5 736.2ZM501.5 736.2Q447.5 600.8 302.6 584.7Q386.1 681.3 501.5 736.2ZM506.1 665.8Q638.5 668.6 703.2 553.1Q592.8 588.8 506.1 665.8ZM506.1 665.8Q462.5 540.8 331.7 520.4Q403.6 611.4 506.1 665.8ZM514.2 593.1Q633.0 601.2 696.0 500.2Q595.3 527.6 514.2 593.1ZM514.2 593.1Q480.4 479.0 363.7 455.1Q424.5 539.9 514.2 593.1ZM526.3 518.0Q631.2 530.2 691.5 443.4Q601.0 463.3 526.3 518.0ZM526.3 518.0Q501.2 415.3 398.8 389.1Q449.0 466.9 526.3 518.0ZM542.7 440.2Q633.8 455.5 690.1 382.3Q610.4 395.8 542.7 440.2ZM542.7 440.2Q525.4 349.5 437.2 322.2Q477.6 392.3 542.7 440.2ZM564.1 359.6Q641.2 376.6 692.4 316.6Q623.7 324.6 564.1 359.6ZM564.1 359.6Q553.1 281.5 479.0 254.3Q510.4 315.9 564.1 359.6ZM590.7 276.3Q654.0 293.5 699.0 245.8Q641.6 249.7 590.7 276.3ZM590.7 276.3Q584.8 210.9 524.4 185.3Q548.0 237.8 590.7 276.3Z"/>
+<path d="M500 830C498 660 520 470 600 250" fill="none" stroke="url(#e-gold)" stroke-width="26" stroke-linecap="round"/>
+</g>
+<rect width="1024" height="1024" fill="url(#sheen)"/></g><use href="#sq" fill="none" stroke="url(#edge)" stroke-width="5" clip-path="url(#sqc)"/></symbol>
+    <symbol id="logo-panes" viewBox="0 0 1024 1024">
+<defs>
+<radialGradient id="f-b1" cx=".2" cy=".2" r=".7"><stop offset="0" stop-color="#ff6b8b"/><stop offset="1" stop-color="#ff6b8b" stop-opacity="0"/></radialGradient>
+<radialGradient id="f-b2" cx=".9" cy=".25" r=".7"><stop offset="0" stop-color="#7c5cff"/><stop offset="1" stop-color="#7c5cff" stop-opacity="0"/></radialGradient>
+<radialGradient id="f-b3" cx=".55" cy="1" r=".7"><stop offset="0" stop-color="#ffb35c"/><stop offset="1" stop-color="#ffb35c" stop-opacity="0"/></radialGradient>
+<linearGradient id="f-pane" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".42"/><stop offset="1" stop-color="#fff" stop-opacity=".14"/></linearGradient>
+<linearGradient id="f-rim" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".95"/><stop offset=".5" stop-color="#fff" stop-opacity=".2"/><stop offset="1" stop-color="#fff" stop-opacity=".5"/></linearGradient>
+<g id="f-blobs"><rect width="1024" height="1024" fill="#3b2a8f"/><rect width="1024" height="1024" fill="url(#f-b1)"/><rect width="1024" height="1024" fill="url(#f-b2)"/><rect width="1024" height="1024" fill="url(#f-b3)"/></g>
+<clipPath id="f-side"><rect x="215" y="245" width="200" height="534" rx="66"/></clipPath>
+<clipPath id="f-main"><rect x="445" y="245" width="364" height="534" rx="66"/></clipPath>
+</defs>
+<g clip-path="url(#sqc)"><use href="#f-blobs"/>
+<g filter="url(#drop)">
+<g clip-path="url(#f-main)"><g filter="url(#blur40)"><use href="#f-blobs"/></g><rect width="1024" height="1024" fill="url(#f-pane)"/></g>
+<g clip-path="url(#f-side)"><g filter="url(#blur40)"><use href="#f-blobs"/></g><rect width="1024" height="1024" fill="url(#f-pane)"/></g>
+</g>
+<rect x="445" y="245" width="364" height="534" rx="66" fill="none" stroke="url(#f-rim)" stroke-width="5"/>
+<rect x="215" y="245" width="200" height="534" rx="66" fill="none" stroke="url(#f-rim)" stroke-width="5"/>
+<rect x="262" y="310" width="106" height="30" rx="15" fill="#fff" opacity=".95"/>
+<rect x="262" y="370" width="106" height="30" rx="15" fill="#fff" opacity=".55"/>
+<rect x="262" y="430" width="106" height="30" rx="15" fill="#fff" opacity=".55"/>
+<circle cx="315" cy="712" r="18" fill="#fff" opacity=".9"/>
+<rect width="1024" height="1024" fill="url(#sheen)"/></g><use href="#sq" fill="none" stroke="url(#edge)" stroke-width="5" clip-path="url(#sqc)"/></symbol>
   </defs>
 </svg>
 
@@ -266,7 +252,7 @@
   <header>
     <div>
       <h1>Leto logo concepts</h1>
-      <p class="lede">Six directions for Leto's icon, each shown as a macOS app icon at full size,
+      <p class="lede">Six directions for Leto's icon in the current macOS style, each shown at full size,
         at the sizes macOS uses, and with the wordmark. Star the ones you like; your picks are saved in this browser.</p>
     </div>
     <div class="controls" role="group" aria-label="Background">
@@ -294,45 +280,45 @@
 <script>
   const concepts = [
     {
-      id: 'twins', name: 'Twins',
+      id: 'orbs', name: 'Twin Orbs',
       font: 'ui-serif, "New York", Georgia, serif', weight: 500,
-      desc: 'In myth, Leto is the mother of Apollo and Artemis, the sun and the moon. A warm sun and a cool crescent share one sky, the way Spaces share one window.',
-      palette: ['#2b2163', '#5a3fb0', '#ffd27a', '#ff7a59', '#c9d2ff'],
+      desc: 'Leto is the mother of Apollo and Artemis, the sun and the moon. Two glossy orbs overlap and glow where they meet, the way Spaces share one window.',
+      palette: ['#140f3a', '#2d1670', '#ffbe55', '#ff6b3d', '#cfd8ff', '#7f7cff'],
     },
     {
-      id: 'sidebar', name: 'Sidebar',
-      font: '-apple-system, "SF Pro Display", system-ui, sans-serif', weight: 650,
-      desc: 'The window Leto is built around: a sidebar holding your tabs and Spaces, and the page beside it. Literal, friendly, and clear at a glance.',
-      palette: ['#fbfaf8', '#e7e3dd', '#7a6bff', '#3f2fd6'],
+      id: 'ribbon', name: 'Ribbon L',
+      font: '-apple-system, "SF Pro Display", system-ui, sans-serif', weight: 700,
+      desc: 'A single ribbon traces an L: the sidebar running down, then the page running out. Warm to cool, on frosted white.',
+      palette: ['#fbfaff', '#e6e0fb', '#ff9a3c', '#ff3d77', '#7a4dff'],
     },
     {
-      id: 'spaces', name: 'Spaces',
+      id: 'prism', name: 'Prism L',
       font: 'ui-rounded, "SF Pro Rounded", system-ui, sans-serif', weight: 700,
-      desc: 'Three cards stacked in one place, one per Space. Colorful and playful, closest in spirit to Arc.',
-      palette: ['#16161a', '#5ee1c6', '#a89bff', '#ff6f61'],
-    },
-    {
-      id: 'monogram', name: 'Monogram',
-      font: '-apple-system, "SF Pro Display", system-ui, sans-serif', weight: 800,
-      desc: 'A bold L whose upright is the sidebar and whose foot is the page edge, with a warm dot for the open tab. Strong as a small mark.',
-      palette: ['#fff4e6', '#ffe0c2', '#14111f', '#ff7a59'],
+      desc: 'Two translucent bars, the sidebar and the page edge, cross to form an L and light up where they overlap.',
+      palette: ['#17151f', '#63f2d8', '#2f7cf6', '#ff5fa2', '#ffa53c'],
     },
     {
       id: 'eclipse', name: 'Eclipse',
       font: 'ui-serif, "New York", Georgia, serif', weight: 400,
-      desc: 'The sun and moon meeting: a dark disc ringed with light. Quiet and premium, and it stands out among bright icons.',
-      palette: ['#0b0b10', '#ffcf8f', '#ff8a5c', '#ff5f6d'],
+      desc: 'The sun and moon meeting: a dark disc ringed with a warm corona and a single flare. Quiet, premium, and unmistakable in the Dock.',
+      palette: ['#05060e', '#1d2148', '#fff1d6', '#ffb46b', '#ff5f6d'],
     },
     {
-      id: 'delos', name: 'Delos',
+      id: 'palm', name: 'Frond',
       font: 'ui-serif, "New York", Georgia, serif', weight: 600,
-      desc: 'Delos is the floating island where Leto finally found a home. A sun rising over calm water: a browser that feels like home.',
-      palette: ['#b9a7ff', '#ffc3a6', '#fff6ec', '#5c4bd6', '#2d2378'],
+      desc: 'On Delos, Leto held on to a palm tree as her twins were born. A gold frond on deep green: calm, crafted, and nothing like other browsers.',
+      palette: ['#0f4a42', '#062620', '#fff2b8', '#f6c453', '#c47a1c'],
+    },
+    {
+      id: 'panes', name: 'Glass Panes',
+      font: '-apple-system, "SF Pro Display", system-ui, sans-serif', weight: 650,
+      desc: 'The window Leto is built around, in frosted glass: a sidebar of tabs beside the page, over a warm gradient.',
+      palette: ['#3b2a8f', '#ff6b8b', '#7c5cff', '#ffb35c', '#ffffff'],
     },
   ];
 
   const use = (id, size) =>
-    `<svg width="${size}" height="${size}" viewBox="0 0 100 100" role="img" aria-label="${id} logo"><use href="#logo-${id}"/></svg>`;
+    `<svg width="${size}" height="${size}" viewBox="0 0 1024 1024" role="img" aria-label="${id} logo"><use href="#logo-${id}"/></svg>`;
 
   const favorites = new Set((() => {
     try { return JSON.parse(localStorage.getItem('leto-logo-favorites') || '[]'); }
