@@ -24,6 +24,20 @@ defaults, ad blocking, and lightweight interface.
   popover.
 - **Automatic picture-in-picture.** A playing video follows you out when you
   switch tabs or Spaces, and returns when you come back.
+- **Pinned tabs and archiving.** Cmd+D pins a tab. Tabs you haven't opened
+  for 12 hours close into history on their own, which you can change in
+  Settings.
+- **Split view.** Cmd+Option+N asks what to open beside the current page, and
+  Shift+Enter in the command bar opens any result in split view.
+- **Link previews.** Shift-click a link to open it in a card over the page,
+  then keep it as a tab, put it in split view, or dismiss it.
+- **Links from other apps.** They open in a small window of their own, from
+  which a page can move into a Space. Sites can be set to always open in a
+  particular Space.
+- **Reader view.** Cmd+Option+R shows just the article, with the system's
+  fonts and light, sepia and dark themes.
+- **Lighter and more private.** Tabs in Spaces you aren't using go to sleep,
+  and Cmd+Shift+C copies links without tracking parameters.
 - **Arc-like defaults.** Vertical tabs only, the last session restored on
   launch, appearance settings shared across Spaces, and emoji avatars for
   Spaces.
