@@ -1,0 +1,473 @@
+--- a/chrome/browser/ui/BUILD.gn
++++ b/chrome/browser/ui/BUILD.gn
+@@ -3366,6 +3366,8 @@ static_library("ui") {
+       "views/leto/command_bar_view.h",
+       "views/leto/global_appearance.cc",
+       "views/leto/global_appearance.h",
++      "views/leto/link_preview.cc",
++      "views/leto/link_preview.h",
+       "views/leto/sidebar_header_view.cc",
+       "views/leto/sidebar_header_view.h",
+       "views/leto/site_controls_view.cc",
+--- a/chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.cc
++++ b/chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.cc
+@@ -118,6 +118,7 @@
+ #endif
+ 
+ #if BUILDFLAG(IS_MAC)
++#include "chrome/browser/ui/views/leto/link_preview.h"
+ #include "ui/display/display.h"
+ #include "ui/display/screen.h"
+ #include "ui/display/types/display_constants.h"
+@@ -568,6 +569,17 @@ content::WebContents* BrowserWebContents
+     }
+   }
+ 
++#if BUILDFLAG(IS_MAC)
++  // Leto: Shift-clicking a link previews it over the page instead of opening
++  // a new window, as in Arc.
++  if (params.disposition == WindowOpenDisposition::NEW_WINDOW && source &&
++      params.user_gesture &&
++      tabs::TabInterface::MaybeGetFromContents(source) &&
++      leto::ShowLinkPreview(&*browser_, params)) {
++    return nullptr;
++  }
++#endif
++
+   NavigateParams nav_params(&*browser_, params.url, params.transition);
+   nav_params.FillNavigateParamsFromOpenURLParams(params);
+   nav_params.source_contents = source;
+--- a/chrome/browser/ui/tab_helpers.h
++++ b/chrome/browser/ui/tab_helpers.h
+@@ -33,6 +33,10 @@ namespace content {
+ class WebContents;
+ }
+ 
++namespace leto {
++class LinkPreview;
++}  // namespace leto
++
+ namespace prerender {
+ class ChromeNoStatePrefetchContentsDelegate;
+ }
+@@ -78,6 +82,8 @@ class TabHelpers {
+ 
+   // Link Preview shows a preview of a page, then promote it as a new tab.
+   friend class PreviewTab;
++  // Leto's link preview does the same.
++  friend class leto::LinkPreview;
+ 
+   // FYI: Do NOT add any more friends here. The functions above are the ONLY
+   // ones that need to call AttachTabHelpers; if you think you do, re-read the
+--- /dev/null
++++ b/chrome/browser/ui/views/leto/link_preview.cc
+@@ -0,0 +1,378 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/views/leto/link_preview.h"
++
++#include <memory>
++#include <string>
++#include <utility>
++
++#include "base/functional/bind.h"
++#include "base/memory/raw_ptr.h"
++#include "base/memory/weak_ptr.h"
++#include "base/scoped_observation.h"
++#include "base/task/sequenced_task_runner.h"
++#include "chrome/app/vector_icons/vector_icons.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/color/chrome_color_id.h"
++#include "chrome/browser/ui/tab_helpers.h"
++#include "chrome/browser/ui/tabs/split_tab_metrics.h"
++#include "chrome/browser/ui/tabs/tab_enums.h"
++#include "chrome/browser/ui/tabs/tab_strip_model.h"
++#include "chrome/browser/ui/views/frame/browser_view.h"
++#include "components/input/native_web_keyboard_event.h"
++#include "components/split_tabs/split_tab_visual_data.h"
++#include "components/tabs/public/tab_interface.h"
++#include "components/url_formatter/elide_url.h"
++#include "components/vector_icons/vector_icons.h"
++#include "content/public/browser/navigation_controller.h"
++#include "content/public/browser/navigation_handle.h"
++#include "content/public/browser/web_contents.h"
++#include "content/public/browser/web_contents_delegate.h"
++#include "content/public/browser/web_contents_observer.h"
++#include "third_party/blink/public/common/input/web_input_event.h"
++#include "ui/base/metadata/metadata_header_macros.h"
++#include "ui/base/metadata/metadata_impl_macros.h"
++#include "ui/base/models/image_model.h"
++#include "ui/base/mojom/dialog_button.mojom.h"
++#include "ui/events/keycodes/keyboard_codes.h"
++#include "ui/gfx/geometry/insets.h"
++#include "ui/gfx/geometry/rect.h"
++#include "ui/views/accessibility/view_accessibility.h"
++#include "ui/views/animation/ink_drop.h"
++#include "ui/views/bubble/bubble_border.h"
++#include "ui/views/bubble/bubble_dialog_delegate_view.h"
++#include "ui/views/controls/button/image_button.h"
++#include "ui/views/controls/highlight_path_generator.h"
++#include "ui/views/controls/label.h"
++#include "ui/views/controls/webview/webview.h"
++#include "ui/views/layout/box_layout.h"
++#include "ui/views/layout/flex_layout.h"
++#include "ui/views/view.h"
++#include "ui/views/view_class_properties.h"
++#include "ui/views/widget/widget.h"
++#include "ui/views/widget/widget_observer.h"
++#include "url/gurl.h"
++
++namespace leto {
++
++namespace {
++
++// The card covers most of the page, leaving the page visible around it.
++constexpr float kSizeFraction = 0.88f;
++constexpr int kCornerRadius = 12;
++constexpr int kHeaderHeight = 36;
++constexpr int kHeaderPadding = 8;
++constexpr int kButtonSize = 26;
++constexpr int kButtonCornerRadius = 6;
++constexpr int kIconSize = 16;
++
++constexpr char16_t kOpenInSplit[] = u"Open in split view";
++constexpr char16_t kOpenAsTab[] = u"Open as tab";
++constexpr char16_t kClose[] = u"Close preview";
++
++std::u16string DisplayHost(const GURL& url) {
++  return url_formatter::FormatUrlForDisplayOmitSchemePathAndTrivialSubdomains(
++      url);
++}
++
++// A borderless icon button with a soft rounded highlight on hover.
++std::unique_ptr<views::ImageButton> MakeHeaderButton(
++    const gfx::VectorIcon& icon,
++    std::u16string_view name,
++    views::Button::PressedCallback callback) {
++  auto button = std::make_unique<views::ImageButton>(std::move(callback));
++  button->SetImageModel(views::Button::STATE_NORMAL,
++                        ui::ImageModel::FromVectorIcon(
++                            icon, ui::kColorSysOnSurfaceSubtle, kIconSize));
++  button->SetImageHorizontalAlignment(views::ImageButton::ALIGN_CENTER);
++  button->SetImageVerticalAlignment(views::ImageButton::ALIGN_MIDDLE);
++  button->SetPreferredSize(gfx::Size(kButtonSize, kButtonSize));
++  button->SetTooltipText(std::u16string(name));
++  button->GetViewAccessibility().SetName(std::u16string(name));
++  views::InkDrop::Get(button.get())
++      ->SetMode(views::InkDropHost::InkDropMode::ON);
++  button->SetHasInkDropActionOnClick(true);
++  views::InkDrop::Get(button.get())->SetBaseColor(ui::kColorSysOnSurface);
++  views::InkDrop::Get(button.get())->SetHighlightOpacity(0.08f);
++  views::InstallRoundRectHighlightPathGenerator(button.get(), gfx::Insets(),
++                                                kButtonCornerRadius);
++  return button;
++}
++
++}  // namespace
++
++// The preview: a card with the page's address and actions over the page. It
++// owns the previewed page until the card closes or hands the page to the tab
++// strip, and deletes itself once its window is gone.
++class LinkPreview : public content::WebContentsDelegate,
++                    public content::WebContentsObserver,
++                    public views::WidgetObserver {
++ public:
++  LinkPreview(BrowserView* browser_view, const content::OpenURLParams& params);
++  LinkPreview(const LinkPreview&) = delete;
++  LinkPreview& operator=(const LinkPreview&) = delete;
++  ~LinkPreview() override;
++
++  // content::WebContentsDelegate:
++  content::WebContents* OpenURLFromTab(
++      content::WebContents* source,
++      const content::OpenURLParams& params,
++      base::OnceCallback<void(content::NavigationHandle&)>
++          navigation_handle_callback) override;
++  content::WebContents* AddNewContents(
++      content::WebContents* source,
++      std::unique_ptr<content::WebContents> new_contents,
++      const GURL& target_url,
++      WindowOpenDisposition disposition,
++      const blink::mojom::WindowFeatures& window_features,
++      bool user_gesture,
++      bool* was_blocked) override;
++  content::KeyboardEventProcessingResult PreHandleKeyboardEvent(
++      content::WebContents* source,
++      const input::NativeWebKeyboardEvent& event) override;
++
++  // content::WebContentsObserver:
++  void DidFinishNavigation(content::NavigationHandle* handle) override;
++
++  // views::WidgetObserver:
++  void OnWidgetDestroying(views::Widget* widget) override;
++
++ private:
++  // Moves the page into the tab strip next to the active tab, in a split view
++  // with it when `split` is set, and closes the card.
++  void Promote(bool split);
++  void Close();
++  void OnCloseRequested(views::Widget::ClosedReason reason);
++
++  raw_ptr<BrowserView> browser_view_;
++  std::unique_ptr<content::WebContents> contents_;
++  // Must outlive `widget_`.
++  std::unique_ptr<views::BubbleDialogDelegate> delegate_;
++  raw_ptr<views::WebView> web_view_ = nullptr;
++  raw_ptr<views::Label> host_label_ = nullptr;
++  std::unique_ptr<views::Widget> widget_;
++  base::ScopedObservation<views::Widget, views::WidgetObserver>
++      widget_observation_{this};
++  bool closing_ = false;
++  base::WeakPtrFactory<LinkPreview> weak_factory_{this};
++};
++
++LinkPreview::LinkPreview(BrowserView* browser_view,
++                         const content::OpenURLParams& params)
++    : browser_view_(browser_view) {
++  Profile* profile = browser_view->browser()->GetProfile();
++  contents_ =
++      content::WebContents::Create(content::WebContents::CreateParams(profile));
++  // The page works as it would in a tab, with ad blocking, history and its
++  // icon, and is ready to become one.
++  TabHelpers::AttachTabHelpers(contents_.get());
++  contents_->SetDelegate(this);
++  Observe(contents_.get());
++  contents_->GetController().LoadURLWithParams(
++      content::NavigationController::LoadURLParams(params));
++
++  // Centred over the page, as large as most of it.
++  const gfx::Rect page_bounds =
++      browser_view->contents_container()->GetBoundsInScreen();
++  const gfx::Size size(static_cast<int>(page_bounds.width() * kSizeFraction),
++                       static_cast<int>(page_bounds.height() * kSizeFraction));
++
++  delegate_ = std::make_unique<views::BubbleDialogDelegate>(
++      views::BubbleAnchor(), views::BubbleBorder::FLOAT,
++      views::BubbleBorder::STANDARD_SHADOW);
++  delegate_->SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
++  delegate_->SetShowCloseButton(false);
++  delegate_->set_margins(gfx::Insets());
++  delegate_->set_corner_radius(kCornerRadius);
++  delegate_->SetBackgroundColor(kColorOmniboxResultsBackground);
++  delegate_->set_parent_window(browser_view->GetWidget()->GetNativeView());
++  delegate_->set_fixed_width(size.width());
++  delegate_->SetAnchorRect(page_bounds);
++
++  auto card = std::make_unique<views::View>();
++  card->SetLayoutManager(std::make_unique<views::BoxLayout>(
++      views::BoxLayout::Orientation::kVertical));
++
++  auto* header = card->AddChildView(std::make_unique<views::View>());
++  header->SetLayoutManager(std::make_unique<views::FlexLayout>())
++      ->SetOrientation(views::LayoutOrientation::kHorizontal)
++      .SetCrossAxisAlignment(views::LayoutAlignment::kCenter)
++      .SetInteriorMargin(gfx::Insets::VH(0, kHeaderPadding))
++      .SetDefault(views::kMarginsKey, gfx::Insets::VH(0, 2));
++  header->SetPreferredSize(gfx::Size(size.width(), kHeaderHeight));
++  host_label_ = header->AddChildView(
++      std::make_unique<views::Label>(DisplayHost(params.url)));
++  host_label_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++  host_label_->SetEnabledColor(ui::kColorSysOnSurfaceSubtle);
++  host_label_->SetProperty(
++      views::kFlexBehaviorKey,
++      views::FlexSpecification(views::MinimumFlexSizeRule::kScaleToZero,
++                               views::MaximumFlexSizeRule::kUnbounded));
++  host_label_->SetProperty(views::kMarginsKey, gfx::Insets::TLBR(0, 6, 0, 2));
++  header->AddChildView(MakeHeaderButton(
++      kSplitSceneIcon, kOpenInSplit,
++      base::BindRepeating(&LinkPreview::Promote, base::Unretained(this),
++                          /*split=*/true)));
++  header->AddChildView(MakeHeaderButton(
++      kOpenInFullIcon, kOpenAsTab,
++      base::BindRepeating(&LinkPreview::Promote, base::Unretained(this),
++                          /*split=*/false)));
++  header->AddChildView(MakeHeaderButton(
++      vector_icons::kCloseIcon, kClose,
++      base::BindRepeating(&LinkPreview::Close, base::Unretained(this))));
++
++  web_view_ = card->AddChildView(std::make_unique<views::WebView>(profile));
++  web_view_->SetPreferredSize(
++      gfx::Size(size.width(), size.height() - kHeaderHeight));
++  web_view_->SetWebContents(contents_.get());
++  delegate_->SetContentsView(std::move(card));
++  delegate_->SetInitiallyFocusedView(web_view_);
++
++  widget_ = views::BubbleDialogDelegate::CreateBubble(delegate_.get());
++  widget_observation_.Observe(widget_.get());
++  // Requests to close the card (Escape, clicking elsewhere) go through
++  // Close(), which also deletes this.
++  widget_->MakeCloseSynchronous(base::BindOnce(&LinkPreview::OnCloseRequested,
++                                               weak_factory_.GetWeakPtr()));
++  widget_->Show();
++}
++
++LinkPreview::~LinkPreview() {
++  Observe(nullptr);
++  if (web_view_) {
++    web_view_->SetWebContents(nullptr);
++  }
++  web_view_ = nullptr;
++  host_label_ = nullptr;
++  widget_observation_.Reset();
++  widget_.reset();
++  if (contents_) {
++    contents_->SetDelegate(nullptr);
++    contents_.reset();
++  }
++}
++
++content::WebContents* LinkPreview::OpenURLFromTab(
++    content::WebContents* source,
++    const content::OpenURLParams& params,
++    base::OnceCallback<void(content::NavigationHandle&)>
++        navigation_handle_callback) {
++  switch (params.disposition) {
++    case WindowOpenDisposition::CURRENT_TAB:
++    case WindowOpenDisposition::NEW_WINDOW:
++      // Links followed in the preview, Shift-clicked ones included, stay in it.
++      source->GetController().LoadURLWithParams(
++          content::NavigationController::LoadURLParams(params));
++      return source;
++    default:
++      // New tabs open in the browser as they would from the page.
++      browser_view_->browser()->OpenGURL(params.url, params.disposition);
++      return nullptr;
++  }
++}
++
++content::WebContents* LinkPreview::AddNewContents(
++    content::WebContents* source,
++    std::unique_ptr<content::WebContents> new_contents,
++    const GURL& target_url,
++    WindowOpenDisposition disposition,
++    const blink::mojom::WindowFeatures& window_features,
++    bool user_gesture,
++    bool* was_blocked) {
++  // Pages the preview opens, like target=_blank links, become tabs.
++  TabStripModel* model = browser_view_->browser()->GetTabStripModel();
++  content::WebContents* raw = new_contents.get();
++  model->InsertWebContentsAt(model->active_index() + 1, std::move(new_contents),
++                             AddTabTypes::ADD_ACTIVE);
++  return raw;
++}
++
++content::KeyboardEventProcessingResult LinkPreview::PreHandleKeyboardEvent(
++    content::WebContents* source,
++    const input::NativeWebKeyboardEvent& event) {
++  if (event.GetType() == blink::WebInputEvent::Type::kRawKeyDown &&
++      event.windows_key_code == ui::VKEY_ESCAPE) {
++    Close();
++    return content::KeyboardEventProcessingResult::HANDLED;
++  }
++  return content::KeyboardEventProcessingResult::NOT_HANDLED;
++}
++
++void LinkPreview::DidFinishNavigation(content::NavigationHandle* handle) {
++  if (handle->IsInPrimaryMainFrame() && handle->HasCommitted() && host_label_) {
++    host_label_->SetText(DisplayHost(handle->GetURL()));
++  }
++}
++
++void LinkPreview::OnWidgetDestroying(views::Widget* widget) {
++  // The browser window is closing and took the card with it.
++  widget_observation_.Reset();
++  web_view_ = nullptr;
++  host_label_ = nullptr;
++  if (!closing_) {
++    closing_ = true;
++    base::SequencedTaskRunner::GetCurrentDefault()->DeleteSoon(FROM_HERE, this);
++  }
++}
++
++void LinkPreview::Promote(bool split) {
++  if (closing_ || !contents_) {
++    return;
++  }
++  Observe(nullptr);
++  web_view_->SetWebContents(nullptr);
++  contents_->SetDelegate(nullptr);
++
++  TabStripModel* model = browser_view_->browser()->GetTabStripModel();
++  tabs::TabInterface* active = model->GetActiveTab();
++  const bool can_split = split && active && !active->IsSplit();
++  content::WebContents* page = contents_.get();
++  const int index = model->InsertWebContentsAt(
++      model->active_index() + 1, std::move(contents_),
++      can_split ? AddTabTypes::ADD_NONE : AddTabTypes::ADD_ACTIVE);
++  if (can_split) {
++    model->AddToNewSplit(
++        {index},
++        split_tabs::SplitTabVisualData(split_tabs::SplitTabLayout::kSideBySide),
++        split_tabs::SplitTabCreatedSource::kLinkClick);
++    // Splitting may move tabs, so find the page again.
++    model->ActivateTabAt(model->GetIndexOfWebContents(page));
++  }
++  Close();
++}
++
++void LinkPreview::Close() {
++  if (closing_) {
++    return;
++  }
++  closing_ = true;
++  if (widget_) {
++    widget_->Hide();
++  }
++  // The page and the card's window go once the current event is handled.
++  base::SequencedTaskRunner::GetCurrentDefault()->DeleteSoon(FROM_HERE, this);
++}
++
++void LinkPreview::OnCloseRequested(views::Widget::ClosedReason reason) {
++  Close();
++}
++
++bool ShowLinkPreview(BrowserWindowInterface* browser,
++                     const content::OpenURLParams& params) {
++  if (browser->GetType() != BrowserWindowInterface::TYPE_NORMAL) {
++    return false;
++  }
++  BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser);
++  if (!browser_view || !browser_view->GetWidget() ||
++      !browser_view->contents_container()) {
++    return false;
++  }
++  // Deletes itself when closed.
++  new LinkPreview(browser_view, params);
++  return true;
++}
++
++}  // namespace leto
+--- /dev/null
++++ b/chrome/browser/ui/views/leto/link_preview.h
+@@ -0,0 +1,28 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_VIEWS_LETO_LINK_PREVIEW_H_
++#define CHROME_BROWSER_UI_VIEWS_LETO_LINK_PREVIEW_H_
++
++class BrowserWindowInterface;
++
++namespace content {
++struct OpenURLParams;
++}  // namespace content
++
++namespace leto {
++
++// Link previews, like Arc's Peek and Zen's Glance: Shift-clicking a link opens
++// it in a card floating over the page instead of a new window. The card can be
++// kept as a tab or put in split view, and Escape or clicking outside it closes
++// it.
++
++// Shows the page `params` opens in a preview over `browser`'s page. Returns
++// false if it doesn't, in which case the link should open as usual.
++bool ShowLinkPreview(BrowserWindowInterface* browser,
++                     const content::OpenURLParams& params);
++
++}  // namespace leto
++
++#endif  // CHROME_BROWSER_UI_VIEWS_LETO_LINK_PREVIEW_H_
