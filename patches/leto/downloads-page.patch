@@ -1,0 +1,182 @@
+--- a/chrome/browser/resources/downloads/item.css
++++ b/chrome/browser/resources/downloads/item.css
+@@ -365,3 +365,127 @@ cr-button {
+     -webkit-mask-image: url(images/incognito_marker.svg);
+   }
+ }
++
++/* Leto: calm rows instead of cards, in the style of Leto's popups. The
++ * html[dir] context outranks the rules above, which WebUI refreshes scope to
++ * the page's attributes. */
++:host-context(html[dir]) {
++  #date {
++    color: var(--cr-secondary-text-color);
++    font-size: 12px;
++    font-weight: 500;
++    letter-spacing: 0;
++    margin: 20px auto 4px;
++    padding: 0 12px;
++  }
++
++  #content,
++  #content.is-active,
++  #content:not(.is-active) {
++    background-color: transparent;
++    border: none;
++    border-radius: 12px;
++    box-shadow: none;
++    margin: 2px auto;
++    min-height: 0;
++    transition: background-color 150ms;
++  }
++
++  #content:hover,
++  #content:focus-within {
++    background-color: color-mix(in srgb, var(--cr-primary-text-color) 5%,
++        transparent);
++  }
++
++  #content:not(.is-active) {
++    opacity: .6;
++  }
++
++  .icon-wrapper {
++    align-items: center;
++    align-self: center;
++    display: flex;
++    margin: 10px 12px 10px 10px;
++  }
++
++  #file-icon-wrapper {
++    background-color: color-mix(in srgb, var(--cr-primary-text-color) 7%,
++        transparent);
++    border-radius: 10px;
++    height: 36px;
++    width: 36px;
++  }
++
++  .icon {
++    height: 20px;
++    width: 20px;
++  }
++
++  #details {
++    justify-content: center;
++    padding: 10px 8px 10px 0;
++  }
++
++  #fileLink,
++  #name,
++  .is-active #fileLink,
++  .is-active #name {
++    color: var(--cr-primary-text-color);
++    font-size: 14px;
++    font-weight: 500;
++    text-decoration: none;
++  }
++
++  #fileLink:hover {
++    text-decoration: underline;
++  }
++
++  #tag,
++  #initiator-origin,
++  .description,
++  .is-active .description[description-color=''] {
++    color: var(--cr-secondary-text-color);
++    font-size: 12px;
++  }
++
++  #initiator-origin,
++  .description:not(:empty) {
++    margin-top: 2px;
++  }
++
++  /* The controls row is usually empty; only its button takes room. */
++  .controls {
++    margin-top: 0;
++  }
++
++  #deepScan {
++    margin-top: 8px;
++  }
++
++  #progress {
++    margin-top: 8px;
++    --cr-progress-active-color: var(--cr-primary-text-color);
++    --cr-progress-container-color: color-mix(in srgb,
++        var(--cr-primary-text-color) 10%, transparent);
++  }
++
++  .more-options {
++    justify-content: center;
++  }
++
++  /* The actions show on hover, as in the sidebar. */
++  #action-icon-buttons {
++    --cr-icon-button-icon-size: 16px;
++    --cr-icon-button-size: 30px;
++    --iron-icon-fill-color: var(--cr-secondary-text-color);
++    gap: 2px;
++    margin: 0 8px;
++    opacity: 0;
++    transition: opacity 150ms;
++  }
++
++  #content:hover #action-icon-buttons,
++  #content:focus-within #action-icon-buttons {
++    opacity: 1;
++  }
++}
+--- a/chrome/browser/resources/downloads/manager.css
++++ b/chrome/browser/resources/downloads/manager.css
+@@ -30,17 +30,23 @@
+ 
+ #toolbar {
+   z-index: 1;
+-  --cr-toolbar-center-basis: 680px;
++  /* Leto: a narrower column and a quiet search field. */
++  --cr-toolbar-center-basis: 640px;
+   --cr-toolbar-field-max-width: var(--cr-toolbar-center-basis);
+   --cr-toolbar-field-width: 100%;
+   --cr-toolbar-header-white-space: nowrap;
++  --cr-toolbar-header-font-weight: 600;
++  --cr-toolbar-search-field-background: color-mix(in srgb,
++      var(--cr-primary-text-color) 6%, transparent);
++  --cr-focus-outline-color: color-mix(in srgb, var(--cr-primary-text-color) 22%,
++      transparent);
+ }
+ 
+ downloads-item,
+ #downloadsList,
+ cr-toast-manager {
+-  --downloads-card-margin: 24px;
+-  --downloads-card-width: clamp(550px, 80%, 680px);
++  --downloads-card-margin: 16px;
++  --downloads-card-width: clamp(480px, 80%, 640px);
+   --cr-toast-max-width: var(--downloads-card-width);
+ }
+ 
+--- a/chrome/browser/resources/downloads/toolbar.css
++++ b/chrome/browser/resources/downloads/toolbar.css
+@@ -20,6 +20,20 @@
+   min-width: 0;
+ }
+ 
++/* Leto: a quiet text button, like the "Show all" in the downloads bubble. */
+ #clearAll {
++  --cr-hover-background-color: color-mix(in srgb,
++      var(--cr-primary-text-color) 6%, transparent);
++  background: transparent;
++  border: none;
++  border-radius: 8px;
++  color: var(--cr-secondary-text-color);
++  font-weight: 500;
++  height: 30px;
++  padding: 0 10px;
+   white-space: nowrap;
+ }
++
++#clearAll:hover {
++  color: var(--cr-primary-text-color);
++}
