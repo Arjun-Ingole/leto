@@ -1,0 +1,650 @@
+--- a/chrome/browser/ui/BUILD.gn
++++ b/chrome/browser/ui/BUILD.gn
+@@ -3388,6 +3388,8 @@ static_library("ui") {
+       "views/leto/space_switcher_mac.mm",
+       "views/leto/tab_archiver.cc",
+       "views/leto/tab_archiver.h",
++      "views/leto/tab_drop.cc",
++      "views/leto/tab_drop.h",
+     ]
+ 
+     deps += [
+--- a/chrome/browser/ui/views/frame/vertical_tab_strip_region_view.cc
++++ b/chrome/browser/ui/views/frame/vertical_tab_strip_region_view.cc
+@@ -976,6 +976,12 @@ gfx::Rect VerticalTabStripRegionView::Ge
+   // tab strip's max size, saving space for the bottom button container and
+   // padding.
+   gfx::Rect tab_strip_draggable_bounds = tab_strip_view()->GetBoundsInScreen();
++#if BUILDFLAG(IS_MAC)
++  // Leto: tabs can be dragged anywhere in the sidebar, up to its header to
++  // pin them and down to the spaces in its footer to move them, without
++  // tearing off into a window of their own.
++  return GetBoundsInScreen();
++#else
+   tab_strip_draggable_bounds.set_height(
+       GetBoundsInScreen().bottom() -
+       bottom_button_container_->GetMinimumSize().height() -
+@@ -983,6 +989,7 @@ gfx::Rect VerticalTabStripRegionView::Ge
+           LayoutConstant::kVerticalTabStripUncollapsedVerticalPadding) -
+       tab_strip_draggable_bounds.y());
+   return tab_strip_draggable_bounds;
++#endif
+ }
+ 
+ void VerticalTabStripRegionView::OnExpandOnHoverEnabledChanged(
+--- a/chrome/browser/ui/views/leto/space_bar_view.cc
++++ b/chrome/browser/ui/views/leto/space_bar_view.cc
+@@ -34,6 +34,8 @@
+ #include "ui/compositor/layer.h"
+ #include "ui/events/event.h"
+ #include "ui/gfx/geometry/insets.h"
++#include "ui/gfx/geometry/point_f.h"
++#include "ui/gfx/geometry/transform.h"
+ #include "ui/views/accessibility/view_accessibility.h"
+ #include "ui/views/border.h"
+ #include "ui/views/controls/button/image_button.h"
+@@ -74,6 +76,7 @@ class SpaceButton : public views::ImageB
+   }
+ 
+   const base::FilePath& profile_path() const { return profile_path_; }
++  bool is_current() const { return is_current_; }
+ 
+  private:
+   const base::FilePath profile_path_;
+@@ -88,6 +91,7 @@ constexpr int kRingThickness = 2;
+ constexpr int kRingGap = 1;
+ constexpr int kSpacing = 6;
+ constexpr float kInactiveOpacity = 0.45f;
++constexpr float kDropTargetScale = 1.3f;
+ 
+ ProfileAttributesStorage& GetStorage() {
+   return g_browser_process->profile_manager()->GetProfileAttributesStorage();
+@@ -173,6 +177,55 @@ void SpaceBarView::ShowContextMenuForVie
+                           views::MenuAnchorPosition::kTopLeft, source_type);
+ }
+ 
++std::optional<base::FilePath> SpaceBarView::GetOtherSpaceAt(
++    const gfx::Point& point_in_screen) const {
++  if (!GetVisible()) {
++    return std::nullopt;
++  }
++  for (const views::View* child : children()) {
++    const auto* button = views::AsViewClass<SpaceButton>(child);
++    if (!button || button->is_current()) {
++      continue;
++    }
++    // A little slack around the small buttons makes them easier to hit.
++    gfx::Rect bounds = button->GetBoundsInScreen();
++    bounds.Outset(kSpacing / 2);
++    if (bounds.Contains(point_in_screen)) {
++      return button->profile_path();
++    }
++  }
++  return std::nullopt;
++}
++
++void SpaceBarView::SetDropTarget(
++    const std::optional<base::FilePath>& profile_path) {
++  if (drop_target_ == profile_path) {
++    return;
++  }
++  drop_target_ = profile_path;
++  UpdateDropTarget();
++}
++
++void SpaceBarView::UpdateDropTarget() {
++  for (views::View* child : children()) {
++    auto* button = views::AsViewClass<SpaceButton>(child);
++    if (!button || button->is_current()) {
++      continue;
++    }
++    const bool targeted = drop_target_ == button->profile_path();
++    button->layer()->SetOpacity(targeted ? 1.0f : kInactiveOpacity);
++    // Grow the targeted space's button about its center.
++    gfx::Transform transform;
++    if (targeted) {
++      const gfx::PointF center(button->width() / 2.0f, button->height() / 2.0f);
++      transform.Translate(center.x(), center.y());
++      transform.Scale(kDropTargetScale, kDropTargetScale);
++      transform.Translate(-center.x(), -center.y());
++    }
++    button->layer()->SetTransform(transform);
++  }
++}
++
+ void SpaceBarView::ExecuteCommand(int command_id, int event_flags) {
+   switch (command_id) {
+     case kEditSpace:
+--- a/chrome/browser/ui/views/leto/space_bar_view.h
++++ b/chrome/browser/ui/views/leto/space_bar_view.h
+@@ -6,6 +6,7 @@
+ #define CHROME_BROWSER_UI_VIEWS_LETO_SPACE_BAR_VIEW_H_
+ 
+ #include <memory>
++#include <optional>
+ #include <string>
+ 
+ #include "base/files/file_path.h"
+@@ -52,6 +53,15 @@ class SpaceBarView : public views::View,
+   // ui::SimpleMenuModel::Delegate:
+   void ExecuteCommand(int command_id, int event_flags) override;
+ 
++  // The space, other than this window's, whose button is at
++  // `point_in_screen`, if any. Tabs dropped on it move to that space.
++  std::optional<base::FilePath> GetOtherSpaceAt(
++      const gfx::Point& point_in_screen) const;
++
++  // Highlights the button of the space at `profile_path`, where dragged tabs
++  // would go, or none.
++  void SetDropTarget(const std::optional<base::FilePath>& profile_path);
++
+   // ProfileAttributesStorage::Observer:
+   void OnProfileAdded(const base::FilePath& profile_path) override;
+   void OnProfileWasRemoved(const base::FilePath& profile_path,
+@@ -65,10 +75,13 @@ class SpaceBarView : public views::View,
+ 
+  private:
+   void Rebuild();
++  void UpdateDropTarget();
+ 
+   raw_ptr<BrowserWindowInterface> browser_;
+   // The space whose button was right-clicked, if one was.
+   base::FilePath menu_space_path_;
++  // The space dragged tabs are over, if any.
++  std::optional<base::FilePath> drop_target_;
+   std::unique_ptr<ui::SimpleMenuModel> menu_model_;
+   std::unique_ptr<views::MenuRunner> menu_runner_;
+   base::ScopedObservation<ProfileAttributesStorage,
+--- /dev/null
++++ b/chrome/browser/ui/views/leto/tab_drop.cc
+@@ -0,0 +1,360 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/views/leto/tab_drop.h"
++
++#include <memory>
++#include <optional>
++#include <string>
++#include <utility>
++#include <vector>
++
++#include "base/files/file_path.h"
++#include "base/functional/bind.h"
++#include "base/memory/weak_ptr.h"
++#include "base/task/sequenced_task_runner.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/color/chrome_color_id.h"
++#include "chrome/browser/ui/navigator/browser_navigator.h"
++#include "chrome/browser/ui/navigator/browser_navigator_params.h"
++#include "chrome/browser/ui/tabs/tab_enums.h"
++#include "chrome/browser/ui/tabs/tab_strip_model.h"
++#include "chrome/browser/ui/views/frame/browser_view.h"
++#include "chrome/browser/ui/views/frame/vertical_tab_strip_region_view.h"
++#include "chrome/browser/ui/views/leto/space_bar_view.h"
++#include "chrome/browser/ui/views/leto/space_switcher.h"
++#include "chrome/browser/ui/views/tabs/common/tab_strip_view.h"
++#include "chrome/browser/ui/views/tabs/vertical/vertical_tab_strip_bottom_container.h"
++#include "content/public/browser/web_contents.h"
++#include "ui/base/metadata/metadata_header_macros.h"
++#include "ui/base/metadata/metadata_impl_macros.h"
++#include "ui/base/page_transition_types.h"
++#include "ui/base/window_open_disposition.h"
++#include "ui/color/color_id.h"
++#include "ui/compositor/layer.h"
++#include "ui/gfx/geometry/point.h"
++#include "ui/gfx/geometry/rect.h"
++#include "ui/views/background.h"
++#include "ui/views/border.h"
++#include "ui/views/controls/label.h"
++#include "ui/views/controls/scroll_view.h"
++#include "ui/views/view_class_properties.h"
++#include "ui/views/view_utils.h"
++#include "url/gurl.h"
++
++namespace leto {
++
++namespace {
++
++constexpr int kIndicatorHeight = 32;
++constexpr int kIndicatorCornerRadius = 10;
++constexpr int kIndicatorInset = 6;
++
++enum class DropAction { kNone, kPin, kUnpin, kMoveToSpace };
++
++struct DropTarget {
++  DropAction action = DropAction::kNone;
++  base::FilePath space;
++};
++
++// A soft rounded band showing where dropped tabs will go.
++class DropIndicator : public views::View {
++  METADATA_HEADER(DropIndicator, views::View)
++
++ public:
++  DropIndicator() {
++    SetPaintToLayer();
++    layer()->SetFillsBoundsOpaquely(false);
++    SetCanProcessEventsWithinSubtree(false);
++    SetProperty(views::kViewIgnoredByLayoutKey, true);
++    // Solid, like the site pill, so the band reads clearly over the tabs.
++    SetBackground(views::CreateRoundedRectBackground(
++        kColorToolbarBackgroundSubtleEmphasis, kIndicatorCornerRadius));
++    SetBorder(views::CreateRoundedRectBorder(1, kIndicatorCornerRadius,
++                                             kColorToolbarButtonIconInactive));
++    SetUseDefaultFillLayout(true);
++    label_ = AddChildView(std::make_unique<views::Label>());
++    label_->SetEnabledColor(kColorToolbarButtonIcon);
++    label_->SetSubpixelRenderingEnabled(false);
++    label_->SetSkipSubpixelRenderingOpacityCheck(true);
++    label_->SetFontList(label_->font_list().DeriveWithSizeDelta(-1));
++    SetVisible(false);
++  }
++
++  // Shows the band over `bounds`, in its parent's coordinates, with `text`
++  // in it, or no text if the band covers tabs.
++  void ShowAt(const gfx::Rect& bounds, std::u16string_view text) {
++    // Called on every mouse move of a drag, so only change what changed.
++    if (label_->GetText() != text) {
++      label_->SetText(std::u16string(text));
++    }
++    if (this->bounds() != bounds) {
++      SetBoundsRect(bounds);
++    }
++    if (!GetVisible()) {
++      SetVisible(true);
++    }
++  }
++
++ private:
++  raw_ptr<views::Label> label_ = nullptr;
++};
++
++BEGIN_METADATA(DropIndicator)
++END_METADATA
++
++TabStripView* AsTabStrip(views::View* view) {
++  return view ? views::AsViewClass<TabStripView>(view) : nullptr;
++}
++
++// Only the sidebar takes part; horizontal tab strips are left alone.
++VerticalTabStripRegionView* GetSidebar(views::View* tab_strip) {
++  for (views::View* view = tab_strip; view; view = view->parent()) {
++    if (auto* region = views::AsViewClass<VerticalTabStripRegionView>(view)) {
++      return region;
++    }
++  }
++  return nullptr;
++}
++
++SpaceBarView* GetSpaceBar(views::View* tab_strip) {
++  VerticalTabStripRegionView* sidebar = GetSidebar(tab_strip);
++  VerticalTabStripBottomContainer* footer =
++      sidebar ? sidebar->GetBottomContainer() : nullptr;
++  views::View* space_bar = footer ? footer->space_bar() : nullptr;
++  return space_bar ? views::AsViewClass<SpaceBarView>(space_bar) : nullptr;
++}
++
++DropIndicator* GetIndicator(TabStripView* tab_strip, bool create) {
++  for (views::View* child : tab_strip->children()) {
++    if (auto* indicator = views::AsViewClass<DropIndicator>(child)) {
++      return indicator;
++    }
++  }
++  return create ? tab_strip->AddChildView(std::make_unique<DropIndicator>())
++                : nullptr;
++}
++
++DropTarget GetDropTarget(views::View* tab_strip_view,
++                         const gfx::Point& point_in_screen,
++                         bool dragging_pinned) {
++  TabStripView* tab_strip = AsTabStrip(tab_strip_view);
++  VerticalTabStripRegionView* sidebar = GetSidebar(tab_strip_view);
++  if (!tab_strip || !sidebar ||
++      !sidebar->GetBoundsInScreen().Contains(point_in_screen)) {
++    return {};
++  }
++  if (SpaceBarView* space_bar = GetSpaceBar(tab_strip_view)) {
++    if (std::optional<base::FilePath> space =
++            space_bar->GetOtherSpaceAt(point_in_screen)) {
++      return {DropAction::kMoveToSpace, *space};
++    }
++  }
++  const int unpinned_top =
++      tab_strip->unpinned_tabs_scroll_view()->GetBoundsInScreen().y();
++  if (!dragging_pinned && point_in_screen.y() < unpinned_top) {
++    return {DropAction::kPin};
++  }
++  if (dragging_pinned && point_in_screen.y() >= unpinned_top) {
++    return {DropAction::kUnpin};
++  }
++  return {};
++}
++
++// Moves the pages of `contents` to the Space at `space`, which then comes on
++// screen. Pages can't move between profiles, so they open afresh there, and
++// pinned tabs stay pinned.
++void MoveToSpace(BrowserWindowInterface* browser,
++                 const std::vector<base::WeakPtr<content::WebContents>>& tabs,
++                 const base::FilePath& space) {
++  std::vector<std::pair<GURL, bool>> pages;
++  for (const auto& contents : tabs) {
++    if (!contents) {
++      continue;
++    }
++    const int index =
++        browser->GetTabStripModel()->GetIndexOfWebContents(contents.get());
++    if (index == TabStripModel::kNoTab) {
++      continue;
++    }
++    pages.emplace_back(contents->GetVisibleURL(),
++                       browser->GetTabStripModel()->IsTabPinned(index));
++  }
++  if (pages.empty()) {
++    return;
++  }
++
++  SwitchToSpace(
++      browser, space,
++      base::BindOnce(
++          [](base::WeakPtr<BrowserWindowInterface> source,
++             std::vector<std::pair<GURL, bool>> pages,
++             std::vector<base::WeakPtr<content::WebContents>> tabs,
++             BrowserWindowInterface* target) {
++            for (size_t i = 0; i < pages.size(); ++i) {
++              NavigateParams params(target->GetProfile(), pages[i].first,
++                                    ui::PAGE_TRANSITION_LINK);
++              params.browser = target;
++              params.disposition =
++                  i + 1 == pages.size()
++                      ? WindowOpenDisposition::NEW_FOREGROUND_TAB
++                      : WindowOpenDisposition::NEW_BACKGROUND_TAB;
++              Navigate(&params);
++              if (pages[i].second && params.navigated_or_inserted_contents) {
++                TabStripModel* model = target->GetTabStripModel();
++                const int index = model->GetIndexOfWebContents(
++                    params.navigated_or_inserted_contents);
++                if (index != TabStripModel::kNoTab) {
++                  model->SetTabPinned(index, true);
++                }
++              }
++            }
++            if (!source) {
++              return;
++            }
++            TabStripModel* model = source->GetTabStripModel();
++            for (const auto& contents : tabs) {
++              const int index =
++                  contents ? model->GetIndexOfWebContents(contents.get())
++                           : TabStripModel::kNoTab;
++              if (index != TabStripModel::kNoTab) {
++                model->CloseWebContentsAt(
++                    index, TabCloseTypes::CLOSE_USER_GESTURE |
++                               TabCloseTypes::CLOSE_CREATE_HISTORICAL_TAB);
++              }
++            }
++          },
++          browser->GetWeakPtr(), std::move(pages), tabs));
++}
++
++void ApplyDrop(base::WeakPtr<BrowserWindowInterface> browser,
++               std::vector<base::WeakPtr<content::WebContents>> tabs,
++               DropTarget target) {
++  if (!browser) {
++    return;
++  }
++  TabStripModel* model = browser->GetTabStripModel();
++  auto index_of = [&](const base::WeakPtr<content::WebContents>& contents) {
++    return contents ? model->GetIndexOfWebContents(contents.get())
++                    : TabStripModel::kNoTab;
++  };
++
++  switch (target.action) {
++    case DropAction::kNone:
++      return;
++    case DropAction::kPin:
++      // Pinning moves each tab to the end of the pinned tabs, so going in
++      // order keeps them in order.
++      for (const auto& contents : tabs) {
++        const int index = index_of(contents);
++        if (index != TabStripModel::kNoTab && !model->IsTabPinned(index)) {
++          model->SetTabPinned(index, true);
++        }
++      }
++      return;
++    case DropAction::kUnpin:
++      // Unpinning moves each tab to the start of the other tabs, so going in
++      // reverse keeps them in order.
++      for (auto it = tabs.rbegin(); it != tabs.rend(); ++it) {
++        const int index = index_of(*it);
++        if (index != TabStripModel::kNoTab && model->IsTabPinned(index)) {
++          model->SetTabPinned(index, false);
++        }
++      }
++      return;
++    case DropAction::kMoveToSpace:
++      MoveToSpace(browser.get(), tabs, target.space);
++      return;
++  }
++}
++
++}  // namespace
++
++void UpdateTabDragFeedback(views::View* tab_strip_view,
++                           const gfx::Point& point_in_screen,
++                           bool dragging_pinned) {
++  TabStripView* tab_strip = AsTabStrip(tab_strip_view);
++  if (!tab_strip || !GetSidebar(tab_strip_view)) {
++    return;
++  }
++  const DropTarget target =
++      GetDropTarget(tab_strip_view, point_in_screen, dragging_pinned);
++
++  if (SpaceBarView* space_bar = GetSpaceBar(tab_strip_view)) {
++    space_bar->SetDropTarget(target.action == DropAction::kMoveToSpace
++                                 ? std::optional<base::FilePath>(target.space)
++                                 : std::nullopt);
++  }
++
++  if (target.action != DropAction::kPin &&
++      target.action != DropAction::kUnpin) {
++    if (DropIndicator* indicator = GetIndicator(tab_strip, /*create=*/false);
++        indicator && indicator->GetVisible()) {
++      indicator->SetVisible(false);
++    }
++    return;
++  }
++
++  DropIndicator* indicator = GetIndicator(tab_strip, /*create=*/true);
++  const gfx::Rect pinned = tab_strip->pinned_tabs_scroll_view()->bounds();
++  const gfx::Rect unpinned = tab_strip->unpinned_tabs_scroll_view()->bounds();
++  if (target.action == DropAction::kPin && !pinned.IsEmpty()) {
++    // Outline the pinned tabs, which the dropped tabs join.
++    gfx::Rect bounds = pinned;
++    bounds.Outset(gfx::Outsets::VH(2, 0));
++    bounds.Inset(gfx::Insets::VH(0, kIndicatorInset));
++    indicator->ShowAt(bounds, u"");
++    return;
++  }
++  // With no pinned tabs yet, or when unpinning, a band at the top of the other
++  // tabs says what the drop will do.
++  gfx::Rect bounds(unpinned.x(), unpinned.y(), unpinned.width(),
++                   kIndicatorHeight);
++  bounds.Inset(gfx::Insets::VH(0, kIndicatorInset));
++  indicator->ShowAt(bounds, target.action == DropAction::kPin
++                                ? u"Drop to pin"
++                                : u"Drop to unpin");
++}
++
++void ClearTabDragFeedback(views::View* tab_strip_view) {
++  TabStripView* tab_strip = AsTabStrip(tab_strip_view);
++  if (!tab_strip) {
++    return;
++  }
++  if (DropIndicator* indicator = GetIndicator(tab_strip, /*create=*/false)) {
++    indicator->SetVisible(false);
++  }
++  if (SpaceBarView* space_bar = GetSpaceBar(tab_strip_view)) {
++    space_bar->SetDropTarget(std::nullopt);
++  }
++}
++
++void HandleTabsDropped(views::View* tab_strip_view,
++                       const gfx::Point& point_in_screen,
++                       const std::vector<content::WebContents*>& contents,
++                       bool dragging_pinned) {
++  const DropTarget target =
++      GetDropTarget(tab_strip_view, point_in_screen, dragging_pinned);
++  if (target.action == DropAction::kNone || contents.empty() ||
++      !tab_strip_view->GetWidget()) {
++    return;
++  }
++  BrowserView* browser_view = BrowserView::GetBrowserViewForNativeWindow(
++      tab_strip_view->GetWidget()->GetNativeWindow());
++  if (!browser_view) {
++    return;
++  }
++  std::vector<base::WeakPtr<content::WebContents>> tabs;
++  for (content::WebContents* web_contents : contents) {
++    tabs.push_back(web_contents->GetWeakPtr());
++  }
++  // The drag finishes its own moves first.
++  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
++      FROM_HERE,
++      base::BindOnce(&ApplyDrop, browser_view->browser()->GetWeakPtr(),
++                     std::move(tabs), target));
++}
++
++}  // namespace leto
+--- /dev/null
++++ b/chrome/browser/ui/views/leto/tab_drop.h
+@@ -0,0 +1,47 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_VIEWS_LETO_TAB_DROP_H_
++#define CHROME_BROWSER_UI_VIEWS_LETO_TAB_DROP_H_
++
++#include <vector>
++
++namespace content {
++class WebContents;
++}  // namespace content
++
++namespace gfx {
++class Point;
++}  // namespace gfx
++
++namespace views {
++class View;
++}  // namespace views
++
++namespace leto {
++
++// Arc-style tab drags in the sidebar. Tabs dropped in the pinned area, or
++// higher up in the sidebar, are pinned; pinned tabs dropped among the other
++// tabs are unpinned; and tabs dropped on a Space in the sidebar's footer move
++// to that Space.
++
++// Highlights where the tabs dragged in `tab_strip` would go if dropped at
++// `point_in_screen`.
++void UpdateTabDragFeedback(views::View* tab_strip,
++                           const gfx::Point& point_in_screen,
++                           bool dragging_pinned);
++
++// Removes the highlight once the drag is over.
++void ClearTabDragFeedback(views::View* tab_strip);
++
++// Pins, unpins or moves `contents`, dropped at `point_in_screen`, once the
++// drag has finished.
++void HandleTabsDropped(views::View* tab_strip,
++                       const gfx::Point& point_in_screen,
++                       const std::vector<content::WebContents*>& contents,
++                       bool dragging_pinned);
++
++}  // namespace leto
++
++#endif  // CHROME_BROWSER_UI_VIEWS_LETO_TAB_DROP_H_
+--- a/chrome/browser/ui/views/tabs/common/tab_drag_handler.cc
++++ b/chrome/browser/ui/views/tabs/common/tab_drag_handler.cc
+@@ -12,6 +12,7 @@
+ #include "base/functional/bind.h"
+ #include "base/notreached.h"
+ #include "base/types/to_address.h"
++#include "build/build_config.h"
+ #include "chrome/browser/ui/tabs/tab_group_model.h"
+ #include "chrome/browser/ui/tabs/tab_strip_model.h"
+ #include "chrome/browser/ui/ui_features.h"
+@@ -51,6 +52,10 @@
+ #include "ui/views/view_targeter.h"
+ #include "ui/views/view_utils.h"
+ 
++#if BUILDFLAG(IS_MAC)
++#include "chrome/browser/ui/views/leto/tab_drop.h"
++#endif
++
+ DEFINE_UI_CLASS_PROPERTY_TYPE(gfx::Vector2d*)
+ 
+ namespace {
+@@ -365,6 +370,12 @@ bool TabDragHandlerImpl::ContinueDrag(vi
+     ResetDragState();
+     return false;
+   }
++#if BUILDFLAG(IS_MAC)
++  if (drag_controller_ && !GetDraggingGroupHeaderId()) {
++    leto::UpdateTabDragFeedback(tab_strip_region_view_->GetTabStripView(),
++                                screen_location, IsDraggingPinnedTabs());
++  }
++#endif
+   return true;
+ }
+ 
+@@ -622,6 +633,23 @@ bool TabDragHandlerImpl::OnMouseDragged(
+ }
+ 
+ void TabDragHandlerImpl::OnMouseReleased(const ui::MouseEvent& event) {
++#if BUILDFLAG(IS_MAC)
++  // Leto: dropping tabs in the pinned area pins them, among the other tabs
++  // unpins them, and on a space moves them there.
++  if (drag_controller_ && !GetDraggingGroupHeaderId()) {
++    gfx::Point point_in_screen = event.location();
++    views::View::ConvertPointToScreen(this, &point_in_screen);
++    std::vector<content::WebContents*> contents;
++    for (const TabDragData& tab_drag_data :
++         drag_controller_->GetSessionData().tab_drag_data_) {
++      if (tab_drag_data.contents) {
++        contents.push_back(tab_drag_data.contents);
++      }
++    }
++    leto::HandleTabsDropped(tab_strip_region_view_->GetTabStripView(),
++                            point_in_screen, contents, IsDraggingPinnedTabs());
++  }
++#endif
+   EndDrag(EndDragReason::kComplete);
+ }
+ 
+@@ -797,6 +825,9 @@ void TabDragHandlerImpl::DraggedTabsDeta
+ void TabDragHandlerImpl::StoppedDragging() {
+   expand_on_hover_lock_.reset();
+   scroll_synchronizers_.clear();
++#if BUILDFLAG(IS_MAC)
++  leto::ClearTabDragFeedback(tab_strip_region_view_->GetTabStripView());
++#endif
+ 
+   for (auto& [_, slot_view] : slot_views_) {
+     views::View* dragged_view = ViewFromTabSlot(slot_view);
+--- a/chrome/browser/ui/views/tabs/vertical/vertical_tab_strip_bottom_container.h
++++ b/chrome/browser/ui/views/tabs/vertical/vertical_tab_strip_bottom_container.h
+@@ -42,6 +42,9 @@ class VerticalTabStripBottomContainer :
+   // The sidebar's downloads button, which stands in for the toolbar's.
+   ToolbarButton* downloads_button() { return downloads_button_; }
+ 
++  // The row of spaces, which takes tabs dropped on it.
++  views::View* space_bar() { return space_bar_; }
++
+  private:
+   void OnNewTabButtonContextMenuWillShow();
+   void OnNewTabButtonContextMenuClosed();
