@@ -1,0 +1,147 @@
+--- a/chrome/browser/chrome_browser_main.cc
++++ b/chrome/browser/chrome_browser_main.cc
+@@ -314,6 +314,7 @@
+ #if defined(TOOLKIT_VIEWS)
+ #include "chrome/browser/ui/views/chrome_browser_main_extra_parts_views.h"
+ #include "chrome/browser/ui/views/leto/global_appearance.h"
++#include "chrome/browser/ui/views/leto/sleeping_spaces.h"
+ #include "chrome/browser/ui/views/leto/tab_archiver.h"
+ #endif
+ 
+@@ -1619,6 +1620,7 @@ void ChromeBrowserMainParts::PostProfile
+ #if BUILDFLAG(IS_MAC)
+   leto::AttachGlobalAppearance(profile);
+   leto::StartTabArchiver();
++  leto::StartSleepingSpaces();
+ #endif
+ 
+ #if BUILDFLAG(IS_WIN)
+--- a/chrome/browser/ui/BUILD.gn
++++ b/chrome/browser/ui/BUILD.gn
+@@ -3372,6 +3372,8 @@ static_library("ui") {
+       "views/leto/sidebar_header_view.h",
+       "views/leto/site_controls_view.cc",
+       "views/leto/site_controls_view.h",
++      "views/leto/sleeping_spaces.cc",
++      "views/leto/sleeping_spaces.h",
+       "views/leto/space_bar_view.cc",
+       "views/leto/space_bar_view.h",
+       "views/leto/space_switcher.cc",
+--- /dev/null
++++ b/chrome/browser/ui/views/leto/sleeping_spaces.cc
+@@ -0,0 +1,90 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/views/leto/sleeping_spaces.h"
++
++#include <vector>
++
++#include "base/functional/bind.h"
++#include "base/no_destructor.h"
++#include "base/time/time.h"
++#include "base/timer/timer.h"
++#include "chrome/browser/performance_manager/policies/page_discarding_helper.h"
++#include "chrome/browser/ui/browser_window.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
++#include "chrome/browser/ui/tabs/tab_strip_model.h"
++#include "chrome/browser/ui/views/leto/space_switcher.h"
++#include "components/performance_manager/public/graph/page_node.h"
++#include "components/performance_manager/public/performance_manager.h"
++#include "content/public/browser/web_contents.h"
++
++namespace leto {
++
++namespace {
++
++constexpr base::TimeDelta kCheckInterval = base::Minutes(5);
++// How long a tab in a space that isn't on screen stays awake after it was
++// last looked at.
++constexpr base::TimeDelta kSleepAfter = base::Minutes(15);
++
++bool IsSpaceHidden(BrowserWindowInterface* browser) {
++  BrowserWindow* window = BrowserWindow::FromBrowser(browser);
++  return window && (!window->IsVisible() || window->IsMinimized());
++}
++
++void SleepTabs(BrowserWindowInterface* browser,
++               performance_manager::policies::PageDiscardingHelper* helper) {
++  // A space opened ahead of time is hidden until it's switched to, and its
++  // tabs were just restored, so it isn't left behind.
++  if (browser->GetType() != BrowserWindowInterface::TYPE_NORMAL ||
++      !IsSpaceHidden(browser) || IsPrewarmingSpace(browser)) {
++    return;
++  }
++  const base::Time cutoff = base::Time::Now() - kSleepAfter;
++  TabStripModel* model = browser->GetTabStripModel();
++  std::vector<const performance_manager::PageNode*> pages;
++  for (int index = 0; index < model->count(); ++index) {
++    content::WebContents* contents = model->GetWebContentsAt(index);
++    if (index == model->active_index() || contents->WasDiscarded() ||
++        contents->GetLastActiveTime() >= cutoff) {
++      continue;
++    }
++    if (base::WeakPtr<performance_manager::PageNode> page =
++            performance_manager::PerformanceManager::
++                GetPrimaryPageNodeForWebContents(contents)) {
++      pages.push_back(page.get());
++    }
++  }
++  if (!pages.empty()) {
++    helper->ImmediatelyDiscardMultiplePages(
++        pages, ::mojom::LifecycleUnitDiscardReason::PROACTIVE);
++  }
++}
++
++void SleepHiddenSpaces() {
++  auto* helper =
++      performance_manager::policies::PageDiscardingHelper::GetFromGraph(
++          performance_manager::PerformanceManager::GetGraph());
++  if (!helper) {
++    return;
++  }
++  GlobalBrowserCollection::GetInstance()->ForEach(
++      [helper](BrowserWindowInterface* browser) {
++        SleepTabs(browser, helper);
++        return true;
++      });
++}
++
++}  // namespace
++
++void StartSleepingSpaces() {
++  static base::NoDestructor<base::RepeatingTimer> timer;
++  if (!timer->IsRunning()) {
++    timer->Start(FROM_HERE, kCheckInterval,
++                 base::BindRepeating(&SleepHiddenSpaces));
++  }
++}
++
++}  // namespace leto
+--- /dev/null
++++ b/chrome/browser/ui/views/leto/sleeping_spaces.h
+@@ -0,0 +1,22 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_VIEWS_LETO_SLEEPING_SPACES_H_
++#define CHROME_BROWSER_UI_VIEWS_LETO_SLEEPING_SPACES_H_
++
++namespace leto {
++
++// Puts tabs in spaces that aren't on screen to sleep, as Edge and Brave do for
++// background tabs, to free the memory they hold. A tab sleeps once it hasn't
++// been looked at for a while; each space's active tab stays awake so switching
++// back is instant. Chromium's own rules for discarding decide which tabs are
++// safe to put to sleep, so tabs playing media or holding unsaved form input
++// are left alone.
++
++// Starts checking the spaces periodically. Safe to call more than once.
++void StartSleepingSpaces();
++
++}  // namespace leto
++
++#endif  // CHROME_BROWSER_UI_VIEWS_LETO_SLEEPING_SPACES_H_
