@@ -1,35 +1,75 @@
-# helium-macos
-macOS packaging & development tooling for the
-[Helium Browser](https://github.com/imputnet/helium).
+# Leto
 
-## Building and development
-macOS is our primary development platform, so it's the recommended environment
-for developing new Helium features.
+Leto is a browser for macOS that brings Arc's ideas to a fast, private,
+open source Chromium base. It is built on top of
+[Helium](https://github.com/imputnet/helium), and inherits Helium's privacy
+defaults, ad blocking, and lightweight interface.
 
-[> See docs/building.md](docs/building.md)
+> [!NOTE]
+> Leto is an early, independent project. It is not affiliated with or endorsed
+> by Helium, imput, or The Browser Company. Arc is a trademark of The Browser
+> Company.
 
-## Contributing
-Before contributing to this repo, please read the guidelines in the main repo's
-[CONTRIBUTING.md](https://github.com/imputnet/helium/blob/main/CONTRIBUTING.md).
+## What Leto adds
+
+- **Spaces.** Each profile is a Space, and all Spaces share one window. Switch
+  with the Space bar at the bottom of the sidebar, a two-finger swipe on the
+  sidebar, or Ctrl+Cmd+Left/Right.
+- **A sidebar instead of a toolbar.** Back, forward, and reload sit next to the
+  window controls, and a pill shows the current site. The page gets the whole
+  window.
+- **Command bar.** Cmd+T opens a floating search with history, open tabs, and
+  suggestions. Cmd+L edits the current address.
+- **Site controls.** Quick actions, your extensions, and site settings in one
+  popover.
+- **Automatic picture-in-picture.** A playing video follows you out when you
+  switch tabs or Spaces, and returns when you come back.
+- **Arc-like defaults.** Vertical tabs only, the last session restored on
+  launch, appearance settings shared across Spaces, and emoji avatars for
+  Spaces.
+
+## How it's built
+
+Leto is a fork of [helium-macos](https://github.com/imputnet/helium-macos),
+Helium's macOS packaging and development tooling. Everything Leto changes lives
+in [`patches/leto/`](patches/leto), applied after Helium's and
+ungoogled-chromium's patches. Each patch is a single feature, so Leto can follow
+new Helium releases by rebasing a small, readable patch set.
+
+Logo concepts live in [`branding/logos.html`](branding/logos.html).
+
+## Building
+
+See [docs/building.md](docs/building.md). Leto builds exactly like Helium:
+`./build.sh` produces a release `.dmg`, and `source dev.sh` sets up the
+development environment (`he setup`, `he build`, `he run`).
 
 ## Credits
 
-### Depot
-Big thank you to [Depot](https://depot.dev/) for sponsoring our runners,
-which handle the macOS builds of Helium. Their high-performance infrastructure
-lets us compile, package, and release new builds of Helium within hours,
-not days.
+### Helium
+Leto would not exist without [Helium](https://github.com/imputnet/helium) by
+[imput](https://github.com/imputnet). Helium's browser, its patches, and its
+macOS tooling are the foundation that Leto's features are built on. If you
+want a fast, private Chromium browser with a classic layout, use Helium.
 
-### ungoogled-chromium-macos
-This repo is based on
-[ungoogled-chromium-macos](https://github.com/ungoogled-software/ungoogled-chromium-macos),
-but heavily modified for Helium. Special thanks to everyone behind
-ungoogled-chromium, they made working with Chromium infinitely easier.
+### ungoogled-chromium
+Helium, and so Leto, is based on
+[ungoogled-chromium](https://github.com/ungoogled-software/ungoogled-chromium)
+and [ungoogled-chromium-macos](https://github.com/ungoogled-software/ungoogled-chromium-macos).
+Thanks to everyone behind ungoogled-chromium.
+
+### Chromium
+Leto is built from the [Chromium](https://www.chromium.org/) source code by
+The Chromium Authors.
+
+### Arc
+Leto's interface is inspired by [Arc](https://arc.net/) by The Browser Company.
 
 ## License
-All code, patches, modified portions of imported code or patches, and
-any other content that is unique to Helium and not imported from other
-repositories is licensed under GPL-3.0. See [LICENSE](LICENSE).
+Leto keeps Helium's license. All code, patches, modified portions of imported
+code or patches, and any other content that is unique to Leto or Helium and not
+imported from other repositories is licensed under GPL-3.0. See
+[LICENSE](LICENSE).
 
 Any content imported from other projects retains its original license (for
 example, any original unmodified code imported from ungoogled-chromium remains

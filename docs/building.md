@@ -1,4 +1,7 @@
-# Building and developing Helium
+# Building and developing Leto
+
+Leto builds exactly like [Helium](https://github.com/imputnet/helium), which it
+is built on. Leto's own changes are the patches in `patches/leto/`.
 
 ### Navigation
 - [Official (non-development) build](#official-non-development-build)
@@ -20,7 +23,7 @@
    `brew install python@3.13 wget zstd coreutils readline`
 1. Install Python dependencies via `pip3`: `pip3 install requests pillow`
     * Note that you might need to use `--break-system-packages` if you don't want to use a
-      dedicated Python environment for building Helium.
+      dedicated Python environment for building Leto.
 1. Install Metal toolchain: `xcodebuild -downloadComponent MetalToolchain`
 1. Unlink binutils to use the one provided with Xcode: `brew unlink binutils`
 1. Restart your terminal.
@@ -40,8 +43,8 @@ If you want to notarize the build, you need to have an Apple Developer ID and a 
 If you don't have an Apple Developer ID to sign the build (or you don't want to sign it), you can simply not specify MACOS_CERTIFICATE_NAME.
 
 ```sh
-git clone --recurse-submodules https://github.com/imputnet/helium-macos.git
-cd helium-macos
+git clone --recurse-submodules https://github.com/Arjun-Ingole/leto.git
+cd leto
 ```
 
 to switch to the desired release or development branch.
@@ -101,7 +104,7 @@ brew install quilt
     he run
     ```
 
-5. Done! You have your own home-grown Helium ready for tinkering.
+5. Done! You have your own home-grown Leto ready for tinkering.
 
 ### Creating a new patch
 
@@ -121,7 +124,7 @@ brew install quilt
     ```
     * Note: path here is relative to `build/src`
 
-4. Modify files, test them by building and running Helium.
+4. Modify files, test them by building and running Leto.
 
 5. When you're done, refresh the patch:
     ```sh
@@ -168,7 +171,7 @@ Confused about quilt? Run ```man quilt``` to read more about its functionality.
     4. Go back to Step 5.
 
 1. After all patches are fixed, run `he version && he configure` to finish build env setup.
-1. Build and run Helium to verify that everything functions as intended: `he build && he run`
+1. Build and run Leto to verify that everything functions as intended: `he build && he run`
 1. Run `he validate config` and resolve the error if it occurs.
 1. Run `he pop` to pop all applied patches.
 1. Validate that patches are applied correctly: `he validate config`
