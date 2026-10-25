@@ -1,0 +1,339 @@
+--- a/chrome/app/vector_icons/BUILD.gn
++++ b/chrome/app/vector_icons/BUILD.gn
+@@ -203,6 +203,14 @@ aggregate_vector_icons("chrome_vector_ic
+     "leto_copy.icon",
+     "leto_find.icon",
+     "leto_link.icon",
++    "leto_pip_back_to_tab.icon",
++    "leto_pip_close.icon",
++    "leto_pip_pause.icon",
++    "leto_pip_play.icon",
++    "leto_pip_skip_next.icon",
++    "leto_pip_skip_previous.icon",
++    "leto_pip_volume_off.icon",
++    "leto_pip_volume_up.icon",
+     "leto_qr_code.icon",
+     "leto_reader.icon",
+     "leto_sliders.icon",
+--- /dev/null
++++ b/chrome/app/vector_icons/leto_pip_back_to_tab.icon
+@@ -0,0 +1,15 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++// A window with an arrow pointing back into its corner.
++CANVAS_DIMENSIONS, 20,
++STROKE, 1.5f,
++ROUND_RECT, 2.75f, 3.75f, 14.5f, 12.5f, 2.5f,
++NEW_PATH,
++STROKE, 1.5f,
++MOVE_TO, 12.5f, 12.5f,
++LINE_TO, 7, 7,
++MOVE_TO, 7, 10.5f,
++LINE_TO, 7, 7,
++LINE_TO, 10.5f, 7
+--- /dev/null
++++ b/chrome/app/vector_icons/leto_pip_close.icon
+@@ -0,0 +1,11 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++// A cross with rounded ends.
++CANVAS_DIMENSIONS, 20,
++STROKE, 1.75f,
++MOVE_TO, 5.5f, 5.5f,
++LINE_TO, 14.5f, 14.5f,
++MOVE_TO, 14.5f, 5.5f,
++LINE_TO, 5.5f, 14.5f
+--- /dev/null
++++ b/chrome/app/vector_icons/leto_pip_pause.icon
+@@ -0,0 +1,8 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++// Two rounded bars.
++CANVAS_DIMENSIONS, 20,
++ROUND_RECT, 5.5f, 4, 3.5f, 12, 1.5f,
++ROUND_RECT, 11, 4, 3.5f, 12, 1.5f
+--- /dev/null
++++ b/chrome/app/vector_icons/leto_pip_play.icon
+@@ -0,0 +1,14 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++// A play triangle with softened corners.
++CANVAS_DIMENSIONS, 20,
++MOVE_TO, 6.5f, 5.6f,
++LINE_TO, 6.5f, 14.4f,
++CUBIC_TO, 6.5f, 15.6f, 7.8f, 16.3f, 8.8f, 15.7f,
++LINE_TO, 15.1f, 11.3f,
++CUBIC_TO, 16.1f, 10.7f, 16.1f, 9.3f, 15.1f, 8.7f,
++LINE_TO, 8.8f, 4.3f,
++CUBIC_TO, 7.8f, 3.7f, 6.5f, 4.4f, 6.5f, 5.6f,
++CLOSE
+--- /dev/null
++++ b/chrome/app/vector_icons/leto_pip_skip_next.icon
+@@ -0,0 +1,15 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++// A play triangle against a bar.
++CANVAS_DIMENSIONS, 20,
++MOVE_TO, 4.5f, 6.1f,
++LINE_TO, 4.5f, 13.9f,
++CUBIC_TO, 4.5f, 15, 5.7f, 15.6f, 6.6f, 15,
++LINE_TO, 11.9f, 11.1f,
++CUBIC_TO, 12.7f, 10.5f, 12.7f, 9.5f, 11.9f, 8.9f,
++LINE_TO, 6.6f, 5,
++CUBIC_TO, 5.7f, 4.4f, 4.5f, 5, 4.5f, 6.1f,
++CLOSE,
++ROUND_RECT, 13.5f, 4.5f, 2.25f, 11, 1.1f
+--- /dev/null
++++ b/chrome/app/vector_icons/leto_pip_skip_previous.icon
+@@ -0,0 +1,15 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++// A bar against a backwards play triangle.
++CANVAS_DIMENSIONS, 20,
++MOVE_TO, 15.5f, 6.1f,
++LINE_TO, 15.5f, 13.9f,
++CUBIC_TO, 15.5f, 15, 14.3f, 15.6f, 13.4f, 15,
++LINE_TO, 8.1f, 11.1f,
++CUBIC_TO, 7.3f, 10.5f, 7.3f, 9.5f, 8.1f, 8.9f,
++LINE_TO, 13.4f, 5,
++CUBIC_TO, 14.3f, 4.4f, 15.5f, 5, 15.5f, 6.1f,
++CLOSE,
++ROUND_RECT, 4.25f, 4.5f, 2.25f, 11, 1.1f
+--- /dev/null
++++ b/chrome/app/vector_icons/leto_pip_volume_off.icon
+@@ -0,0 +1,23 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++// A speaker with a cross.
++CANVAS_DIMENSIONS, 20,
++MOVE_TO, 3, 8.5f,
++CUBIC_TO, 3, 7.95f, 3.45f, 7.5f, 4, 7.5f,
++LINE_TO, 6.3f, 7.5f,
++LINE_TO, 9.4f, 4.9f,
++CUBIC_TO, 9.9f, 4.5f, 10.6f, 4.85f, 10.6f, 5.5f,
++LINE_TO, 10.6f, 14.5f,
++CUBIC_TO, 10.6f, 15.15f, 9.9f, 15.5f, 9.4f, 15.1f,
++LINE_TO, 6.3f, 12.5f,
++LINE_TO, 4, 12.5f,
++CUBIC_TO, 3.45f, 12.5f, 3, 12.05f, 3, 11.5f,
++CLOSE,
++NEW_PATH,
++STROKE, 1.5f,
++MOVE_TO, 13.25f, 8.25f,
++LINE_TO, 16.75f, 11.75f,
++MOVE_TO, 16.75f, 8.25f,
++LINE_TO, 13.25f, 11.75f
+--- /dev/null
++++ b/chrome/app/vector_icons/leto_pip_volume_up.icon
+@@ -0,0 +1,23 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++// A speaker with two sound waves.
++CANVAS_DIMENSIONS, 20,
++MOVE_TO, 3, 8.5f,
++CUBIC_TO, 3, 7.95f, 3.45f, 7.5f, 4, 7.5f,
++LINE_TO, 6.3f, 7.5f,
++LINE_TO, 9.4f, 4.9f,
++CUBIC_TO, 9.9f, 4.5f, 10.6f, 4.85f, 10.6f, 5.5f,
++LINE_TO, 10.6f, 14.5f,
++CUBIC_TO, 10.6f, 15.15f, 9.9f, 15.5f, 9.4f, 15.1f,
++LINE_TO, 6.3f, 12.5f,
++LINE_TO, 4, 12.5f,
++CUBIC_TO, 3.45f, 12.5f, 3, 12.05f, 3, 11.5f,
++CLOSE,
++NEW_PATH,
++STROKE, 1.5f,
++MOVE_TO, 13.2f, 7.6f,
++ARC_TO, 3.4f, 3.4f, 0, 0, 1, 13.2f, 12.4f,
++MOVE_TO, 15.3f, 5.5f,
++ARC_TO, 6.4f, 6.4f, 0, 0, 1, 15.3f, 14.5f
+--- a/chrome/browser/ui/views/overlay/back_to_tab_button.cc
++++ b/chrome/browser/ui/views/overlay/back_to_tab_button.cc
+@@ -4,6 +4,7 @@
+ 
+ #include "chrome/browser/ui/views/overlay/back_to_tab_button.h"
+ 
++#include "chrome/app/vector_icons/vector_icons.h"
+ #include "chrome/browser/ui/color/chrome_color_id.h"
+ #include "chrome/grit/generated_resources.h"
+ #include "components/vector_icons/vector_icons.h"
+@@ -28,11 +29,9 @@ OverlayWindowBackToTabButton::OverlayWin
+   SetSize(gfx::Size(kBackToTabButtonSize, kBackToTabButtonSize));
+ 
+   SetImageModel(views::Button::STATE_NORMAL,
+-                ui::ImageModel::FromVectorIcon(
+-                    features::IsRoundedIconsEnabled()
+-                        ? vector_icons::kBackToTabIcon
+-                        : vector_icons::kBackToTabChromeRefreshOldIcon,
+-                    kColorPipWindowForeground, kBackToTabButtonIconSize));
++                ui::ImageModel::FromVectorIcon(kLetoPipBackToTabIcon,
++                                               kColorPipWindowForeground,
++                                               kBackToTabButtonIconSize));
+ 
+   // Accessibility.
+   const std::u16string button_label(l10n_util::GetStringUTF16(
+--- a/chrome/browser/ui/views/overlay/close_image_button.cc
++++ b/chrome/browser/ui/views/overlay/close_image_button.cc
+@@ -4,6 +4,7 @@
+ 
+ #include "chrome/browser/ui/views/overlay/close_image_button.h"
+ 
++#include "chrome/app/vector_icons/vector_icons.h"
+ #include "chrome/browser/ui/color/chrome_color_id.h"
+ #include "chrome/grit/generated_resources.h"
+ #include "components/vector_icons/vector_icons.h"
+@@ -26,12 +27,10 @@ CloseImageButton::CloseImageButton(Press
+     : OverlayWindowImageButton(std::move(callback)) {
+   SetSize(gfx::Size(kCloseButtonSize, kCloseButtonSize));
+ 
+-  auto* icon = &(features::IsRoundedIconsEnabled()
+-                     ? vector_icons::kCloseIcon
+-                     : vector_icons::kCloseChromeRefreshOldIcon);
+-  SetImageModel(views::Button::STATE_NORMAL,
+-                ui::ImageModel::FromVectorIcon(*icon, kColorPipWindowForeground,
+-                                               kCloseButtonIconSize));
++  SetImageModel(
++      views::Button::STATE_NORMAL,
++      ui::ImageModel::FromVectorIcon(
++          kLetoPipCloseIcon, kColorPipWindowForeground, kCloseButtonIconSize));
+ 
+   // Accessibility.
+   const std::u16string close_button_label(
+--- a/chrome/browser/ui/views/overlay/playback_image_button.cc
++++ b/chrome/browser/ui/views/overlay/playback_image_button.cc
+@@ -4,6 +4,7 @@
+ 
+ #include "chrome/browser/ui/views/overlay/playback_image_button.h"
+ 
++#include "chrome/app/vector_icons/vector_icons.h"
+ #include "chrome/browser/ui/color/chrome_color_id.h"
+ #include "chrome/browser/ui/views/overlay/constants.h"
+ #include "chrome/grit/generated_resources.h"
+@@ -31,15 +32,12 @@ PlaybackImageButton::PlaybackImageButton
+   // the ink drop layer, so we need to force the ink drop layer higher here.
+   views::InkDrop::Get(this)->SetLayerRegion(views::LayerRegion::kAbove);
+ 
++  // Leto: matching rounded play and pause glyphs, both in the window's
++  // foreground color.
+   play_image_ = ui::ImageModel::FromVectorIcon(
+-      features::IsRoundedIconsEnabled()
+-          ? vector_icons::kPlayArrowFilledFlippableIcon
+-          : vector_icons::kPlayArrowOldIcon,
+-      ui::kColorSysOnSecondaryContainer, kPlaybackButtonIconSize);
++      kLetoPipPlayIcon, kColorPipWindowForeground, kPlaybackButtonIconSize);
+   pause_image_ = ui::ImageModel::FromVectorIcon(
+-      features::IsRoundedIconsEnabled() ? vector_icons::kPauseFilledIcon
+-                                        : vector_icons::kPauseOldIcon,
+-      kColorPipWindowForeground, kPlaybackButtonIconSize);
++      kLetoPipPauseIcon, kColorPipWindowForeground, kPlaybackButtonIconSize);
+   replay_image_ = ui::ImageModel::FromVectorIcon(
+       features::IsRoundedIconsEnabled() ? vector_icons::kReplayIcon
+                                         : vector_icons::kReplayOldIcon,
+@@ -99,7 +97,9 @@ void PlaybackImageButton::UpdateImageAnd
+ }
+ 
+ void PlaybackImageButton::SetPlayButtonBackground() {
+-  SetBackground(views::CreatePillBackground(ui::kColorSysSecondaryContainer));
++  // Leto: the same soft glass circle as while playing, rather than the accent
++  // color.
++  SetPauseButtonBackground();
+ }
+ 
+ void PlaybackImageButton::SetPauseButtonBackground() {
+--- a/chrome/browser/ui/views/overlay/toggle_mute_button.cc
++++ b/chrome/browser/ui/views/overlay/toggle_mute_button.cc
+@@ -4,6 +4,7 @@
+ 
+ #include "chrome/browser/ui/views/overlay/toggle_mute_button.h"
+ 
++#include "chrome/app/vector_icons/vector_icons.h"
+ #include "chrome/browser/ui/color/chrome_color_id.h"
+ #include "chrome/browser/ui/views/overlay/constants.h"
+ #include "chrome/grit/generated_resources.h"
+@@ -36,13 +37,7 @@ void ToggleMuteButton::UpdateImageAndToo
+     return;
+   }
+ 
+-  const auto& icon = is_muted_
+-                         ? features::IsRoundedIconsEnabled()
+-                               ? vector_icons::kVolumeOffIcon
+-                               : vector_icons::kVolumeOffChromeRefreshOldIcon
+-                     : features::IsRoundedIconsEnabled()
+-                         ? vector_icons::kVolumeUpIcon
+-                         : vector_icons::kVolumeUpChromeRefreshOldIcon;
++  const auto& icon = is_muted_ ? kLetoPipVolumeOffIcon : kLetoPipVolumeUpIcon;
+ 
+   auto text = is_muted_ ? IDS_PICTURE_IN_PICTURE_UNMUTE_TEXT
+                         : IDS_PICTURE_IN_PICTURE_MUTE_TEXT;
+--- a/chrome/browser/ui/views/overlay/video_overlay_window_views.cc
++++ b/chrome/browser/ui/views/overlay/video_overlay_window_views.cc
+@@ -18,6 +18,7 @@
+ #include "base/time/time.h"
+ #include "base/timer/timer.h"
+ #include "build/build_config.h"
++#include "chrome/app/vector_icons/vector_icons.h"
+ #include "chrome/browser/media/media_engagement_service.h"
+ #include "chrome/browser/picture_in_picture/picture_in_picture_occlusion_tracker.h"
+ #include "chrome/browser/picture_in_picture/picture_in_picture_window_manager.h"
+@@ -821,11 +822,9 @@ void VideoOverlayWindowViews::UpdateCont
+   //   * We are in the initial "show" period, or
+   //   * The overlay window does not meet the user interaction criteria and is
+   //   not trusted for media playback
+-  const bool title_is_visible =
+-      force_title_and_scrim_visible_.has_value()
+-          ? force_title_and_scrim_visible_.value()
+-          : wanted_visibility || initial_title_hide_timer_.IsRunning() ||
+-                !can_hide_title_and_scrim;
++  // Leto: the site name and the scrim behind it are never shown; the video
++  // fills the window and the controls appear on hover.
++  const bool title_is_visible = false;
+ 
+   if (should_animate) {
+     // Animate the title and top scrim.
+@@ -1167,9 +1166,7 @@ void VideoOverlayWindowViews::SetUpViews
+                 }
+               },
+               base::Unretained(this)),
+-          features::IsRoundedIconsEnabled()
+-              ? vector_icons::kSkipPreviousIcon
+-              : vector_icons::kSkipPreviousOldIcon,
++          kLetoPipSkipPreviousIcon,
+           l10n_util::GetStringUTF16(
+               IDS_PICTURE_IN_PICTURE_PREVIOUS_TRACK_CONTROL_ACCESSIBLE_TEXT));
+   previous_track_controls_view->SetSize(kActionButtonSize);
+@@ -1185,8 +1182,7 @@ void VideoOverlayWindowViews::SetUpViews
+                 }
+               },
+               base::Unretained(this)),
+-          features::IsRoundedIconsEnabled() ? vector_icons::kSkipNextIcon
+-                                            : vector_icons::kSkipNextOldIcon,
++          kLetoPipSkipNextIcon,
+           l10n_util::GetStringUTF16(
+               IDS_PICTURE_IN_PICTURE_NEXT_TRACK_CONTROL_ACCESSIBLE_TEXT));
+   next_track_controls_view->SetSize(kActionButtonSize);
+@@ -1195,7 +1191,8 @@ void VideoOverlayWindowViews::SetUpViews
+   auto progress_view =
+       std::make_unique<global_media_controls::MediaProgressView>(
+           /*use_squiggly_line=*/false,
+-          /*playing_foreground_color_id=*/ui::kColorSysPrimary,
++          // Leto: a white bar on video, like the other controls.
++          /*playing_foreground_color_id=*/kColorPipWindowForeground,
+           /*playing_background_color_id=*/ui::kColorSysStateDisabled,
+           /*paused_foreground_color_id=*/ui::kColorSysStateDisabled,
+           /*paused_background_color_id=*/ui::kColorSysStateDisabled,
