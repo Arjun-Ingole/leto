@@ -1,0 +1,461 @@
+--- a/chrome/browser/global_keyboard_shortcuts_mac.mm
++++ b/chrome/browser/global_keyboard_shortcuts_mac.mm
+@@ -124,6 +124,7 @@ const std::vector<KeyboardShortcutData>&
+       {false, true,  true,  false, kVK_PageUp,            IDC_MOVE_TAB_PREVIOUS},
+       {true,  false, true,  false, kVK_RightArrow,        IDC_LETO_NEXT_SPACE},
+       {true,  false, true,  false, kVK_LeftArrow,         IDC_LETO_PREVIOUS_SPACE},
++      {true,  false, false, true,  kVK_ANSI_R,            IDC_DISTILL_PAGE},
+ 
+       // Cmd-0..8 select the nth tab, with cmd-9 being "last tab".
+       {true,  false, false, false, kVK_ANSI_1,            IDC_SELECT_TAB_0},
+--- a/chrome/browser/ui/BUILD.gn
++++ b/chrome/browser/ui/BUILD.gn
+@@ -3370,6 +3370,8 @@ static_library("ui") {
+       "views/leto/global_appearance.h",
+       "views/leto/link_preview.cc",
+       "views/leto/link_preview.h",
++      "views/leto/reader_view.cc",
++      "views/leto/reader_view.h",
+       "views/leto/sidebar_header_view.cc",
+       "views/leto/sidebar_header_view.h",
+       "views/leto/site_controls_view.cc",
+--- a/chrome/browser/ui/browser_command_controller.cc
++++ b/chrome/browser/ui/browser_command_controller.cc
+@@ -165,6 +165,7 @@
+ #if BUILDFLAG(IS_MAC)
+ #include "chrome/browser/ui/browser_commands_mac.h"
+ #include "chrome/browser/ui/views/leto/command_bar.h"
++#include "chrome/browser/ui/views/leto/reader_view.h"
+ #include "chrome/browser/ui/views/leto/space_switcher.h"
+ #endif
+ 
+@@ -1570,6 +1571,9 @@ void BrowserCommandController::HandleCom
+     case IDC_COPY_URL:
+       CopyURL(browser_, browser_->tab_strip_model()->GetActiveWebContents());
+       break;
++    case IDC_DISTILL_PAGE:
++      leto::ToggleReaderView(browser_);
++      break;
+     case IDC_OPEN_IN_CHROME:
+       OpenInChrome(browser_);
+       break;
+@@ -2920,6 +2924,9 @@ void BrowserCommandController::UpdateCom
+   command_updater_->UpdateCommandEnabled(
+       IDC_NEW_SPLIT_TAB,
+       browser_->GetType() == BrowserWindowInterface::Type::TYPE_NORMAL);
++  command_updater_->UpdateCommandEnabled(
++      IDC_DISTILL_PAGE,
++      browser_->GetType() == BrowserWindowInterface::Type::TYPE_NORMAL);
+   command_updater_->UpdateCommandEnabled(IDC_GROUP_UNGROUPED_TABS,
+                                          CanGroupAllUngroupedTabs(browser_));
+ 
+--- a/chrome/browser/ui/browser_shortcuts/browser_shortcut_metadata.cc
++++ b/chrome/browser/ui/browser_shortcuts/browser_shortcut_metadata.cc
+@@ -301,6 +301,8 @@ std::optional<BrowserShortcutCommandLabe
+       return Label(IDS_WILDCARD, u"Next space");
+     case IDC_LETO_PREVIOUS_SPACE:
+       return Label(IDS_WILDCARD, u"Previous space");
++    case IDC_DISTILL_PAGE:
++      return Label(IDS_WILDCARD, u"Reader view");
+   }
+ 
+   DCHECK(false) << "Missing browser shortcut label for command id "
+--- /dev/null
++++ b/chrome/browser/ui/views/leto/reader_view.cc
+@@ -0,0 +1,56 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/views/leto/reader_view.h"
++
++#include <string>
++
++#include "base/functional/callback_helpers.h"
++#include "chrome/browser/dom_distiller/tab_utils.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/tabs/tab_strip_model.h"
++#include "components/dom_distiller/core/url_utils.h"
++#include "content/public/browser/navigation_controller.h"
++#include "content/public/browser/navigation_entry.h"
++#include "content/public/browser/web_contents.h"
++#include "content/public/common/referrer.h"
++#include "ui/base/page_transition_types.h"
++#include "url/gurl.h"
++
++namespace leto {
++
++void ToggleReaderView(BrowserWindowInterface* browser) {
++  content::WebContents* contents =
++      browser->GetTabStripModel()->GetActiveWebContents();
++  if (!contents) {
++    return;
++  }
++  const GURL& url = contents->GetLastCommittedURL();
++  if (!dom_distiller::url_utils::IsDistilledPage(url)) {
++    if (dom_distiller::url_utils::IsUrlDistillable(url)) {
++      DistillCurrentPageAndViewIfSuccessful(contents, base::DoNothing());
++    }
++    return;
++  }
++
++  // Leave reader view the way it was entered when possible, so the page keeps
++  // its place in history.
++  const GURL original =
++      dom_distiller::url_utils::GetOriginalUrlFromDistillerUrl(url);
++  content::NavigationController& controller = contents->GetController();
++  if (controller.CanGoBack()) {
++    content::NavigationEntry* previous =
++        controller.GetEntryAtOffset(/*offset=*/-1);
++    if (previous && previous->GetURL() == original) {
++      controller.GoBack();
++      return;
++    }
++  }
++  if (original.is_valid()) {
++    controller.LoadURL(original, content::Referrer(),
++                       ui::PAGE_TRANSITION_LINK, std::string());
++  }
++}
++
++}  // namespace leto
+--- /dev/null
++++ b/chrome/browser/ui/views/leto/reader_view.h
+@@ -0,0 +1,22 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_VIEWS_LETO_READER_VIEW_H_
++#define CHROME_BROWSER_UI_VIEWS_LETO_READER_VIEW_H_
++
++class BrowserWindowInterface;
++
++namespace leto {
++
++// Reader view, as in Safari: the active tab's article shown on its own, in a
++// clean, readable layout with a choice of theme and font, using Chromium's
++// DOM distiller. Opened with Cmd+Option+R or from the site controls.
++
++// Shows the active tab in reader view, or the original page if it is in
++// reader view already.
++void ToggleReaderView(BrowserWindowInterface* browser);
++
++}  // namespace leto
++
++#endif  // CHROME_BROWSER_UI_VIEWS_LETO_READER_VIEW_H_
+--- a/chrome/browser/ui/views/leto/site_controls_view.cc
++++ b/chrome/browser/ui/views/leto/site_controls_view.cc
+@@ -361,7 +361,7 @@ class SiteControlsView : public views::V
+       copy_tile_->SetCallback(base::BindRepeating(&SiteControlsView::CopyLink,
+                                                   base::Unretained(this)));
+     }
+-    add_tile(kLetoReaderIcon, kReader, IDC_SHOW_READING_MODE_SIDE_PANEL);
++    add_tile(kLetoReaderIcon, kReader, IDC_DISTILL_PAGE);
+     add_tile(kLetoQrCodeIcon, kQrCode, IDC_QRCODE_GENERATOR);
+     add_tile(kLetoFindIcon, kFind, IDC_FIND);
+     row->SetVisible(!row->children().empty());
+--- a/components/dom_distiller/core/css/distilledpage_desktop.css
++++ b/components/dom_distiller/core/css/distilledpage_desktop.css
+@@ -327,3 +327,210 @@ select#font-family-selection:focus {
+   justify-content: space-between;
+   padding-top: 8px;
+ }
++
++/* Leto: a calm reader in the browser's style, using the system's fonts. These
++ * rules come last so they take precedence over Chromium's defaults. */
++
++.sans-serif {
++  font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
++}
++
++.serif {
++  font-family: ui-serif, 'New York', 'Iowan Old Style', Charter, Georgia,
++      serif;
++}
++
++.monospace {
++  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
++}
++
++.light {
++  --leto-accent: #2156c4;
++  --leto-rule: rgba(29, 29, 31, .1);
++  --leto-wash: rgba(29, 29, 31, .04);
++  background-color: #fbfbfa;
++  color: #1d1d1f;
++}
++
++.sepia {
++  --leto-accent: #8a4a14;
++  --leto-rule: rgba(63, 49, 34, .14);
++  --leto-wash: rgba(63, 49, 34, .05);
++  background-color: #f6efe2;
++  color: #3f3122;
++}
++
++.dark {
++  --leto-accent: #8fb5ff;
++  --leto-rule: rgba(255, 255, 255, .12);
++  --leto-wash: rgba(255, 255, 255, .05);
++  background-color: #1c1c1e;
++  color: #e6e6e9;
++}
++
++.light a:link,
++.light a:visited,
++.sepia a:link,
++.sepia a:visited,
++.dark a:link,
++.dark a:visited {
++  color: var(--leto-accent);
++  text-decoration: none;
++}
++
++#content a:hover {
++  text-decoration: underline;
++  text-underline-offset: 2px;
++}
++
++#main-content {
++  padding: 0 1.5em;
++  width: 38em;
++}
++
++#settings-container {
++  border-bottom: none;
++  height: 40px;
++  margin-top: 12px;
++}
++
++#settings-container button {
++  color: inherit;
++  opacity: .6;
++}
++
++#settings-container button:hover {
++  background-color: var(--leto-wash);
++  opacity: 1;
++}
++
++#settings-container button#settings-toggle {
++  border-radius: 8px;
++  height: 32px;
++  padding: 0 10px;
++}
++
++.leto-aa {
++  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
++  font-size: 15px;
++  font-weight: 600;
++  letter-spacing: -.01em;
++}
++
++#settings-dialog {
++  border-radius: 12px;
++  box-shadow: 0 0 0 1px rgba(0, 0, 0, .06), 0 12px 32px rgba(0, 0, 0, .18);
++  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
++}
++
++.dark #settings-dialog {
++  background-color: #2c2c2e;
++  color: #e6e6e9;
++}
++
++.checkmark {
++  color: var(--leto-accent);
++}
++
++#main-content #article-header {
++  margin-bottom: .5em;
++  margin-top: 1.5em;
++}
++
++#main-content h1#title-holder {
++  font-size: 2.1em;
++  font-weight: 700;
++  letter-spacing: -.02em;
++  line-height: 1.15;
++}
++
++#content {
++  line-height: 1.65;
++}
++
++#content p {
++  margin: 0 0 1.1em;
++}
++
++#content h2,
++#content h3,
++#content h4 {
++  letter-spacing: -.01em;
++  line-height: 1.3;
++  margin: 1.8em 0 .6em;
++}
++
++#content img,
++#content video,
++#content figure img {
++  border-radius: 10px;
++  height: auto;
++  max-width: 100%;
++}
++
++#content figure {
++  margin: 1.6em 0;
++}
++
++#content figcaption,
++#content .caption {
++  font-size: .85em;
++  line-height: 1.45;
++  margin-top: .5em;
++  opacity: .65;
++}
++
++#content blockquote {
++  border-left: 3px solid var(--leto-rule);
++  margin: 1.4em 0;
++  padding: 0 0 0 1.1em;
++}
++
++#content hr {
++  background: var(--leto-rule);
++  border: none;
++  height: 1px;
++  margin: 2em 0;
++}
++
++#content pre,
++#content code {
++  background: var(--leto-wash);
++  border-radius: 6px;
++  font-size: .9em;
++}
++
++#content pre {
++  padding: .9em 1em;
++}
++
++#content code {
++  padding: .1em .3em;
++}
++
++#content pre code {
++  background: none;
++  padding: 0;
++}
++
++/* Tables read as plain rows rather than shaded boxes. */
++.light tbody tr:nth-child(odd),
++.sepia tbody tr:nth-child(odd),
++.dark tbody tr:nth-child(odd) {
++  background: none;
++}
++
++.light td,
++.sepia td,
++.dark td {
++  border: none;
++}
++
++#content tr {
++  border-bottom: 1px solid var(--leto-rule);
++}
++
++#content th,
++#content td {
++  padding: .5em .75em;
++}
+--- a/components/dom_distiller/core/dom_distiller_features.cc
++++ b/components/dom_distiller/core/dom_distiller_features.cc
+@@ -9,6 +9,7 @@
+ 
+ #include "base/command_line.h"
+ #include "base/feature_list.h"
++#include "build/build_config.h"
+ #include "components/dom_distiller/core/dom_distiller_switches.h"
+ #include "components/dom_distiller/core/pref_names.h"
+ 
+@@ -21,8 +22,13 @@
+ namespace dom_distiller {
+ 
+ bool IsDomDistillerEnabled() {
++#if BUILDFLAG(IS_MAC)
++  // Leto: reader view is built on the distiller, so it's always available.
++  return true;
++#else
+   return base::CommandLine::ForCurrentProcess()->HasSwitch(
+       switches::kEnableDomDistiller);
++#endif
+ }
+ 
+ bool ShouldStartDistillabilityService() {
+--- a/components/dom_distiller/core/html/dom_distiller_viewer.html
++++ b/components/dom_distiller/core/html/dom_distiller_viewer.html
+@@ -17,14 +17,8 @@ found in the LICENSE file.
+   <!-- Placeholder for CSP. -->
+   $1
+   <title>$i18n{title}</title>
+-  <link href="https://fonts.googleapis.com/icon?family=Material+Icons"
+-      rel="stylesheet">
+-  <!-- Import web fonts. -->
+-  <!-- On iOS, the web fonts block the rendering until the resources are fetched,
+-    which can take a long time on slow networks. In Blink, it times out after 3
+-    seconds and uses fallback fonts. See crbug.com/711650 -->
+-  <link href="https://fonts.googleapis.com/css2?family=Lexend&family=Roboto&display=block"
+-      rel="stylesheet" type="text/css">
++  <!-- Leto: no web fonts, so reading a page makes no requests to Google. The
++    icons below are inline and the text uses the system's fonts. -->
+   <!-- Placeholder for CSS. -->
+   $2
+ </head>
+@@ -34,7 +28,7 @@ found in the LICENSE file.
+       <div id="settings-container" class="desktop-only">
+         <button id="settings-toggle" type="button"
+             aria-label="$i18n{customizeAppearance}" tabindex=0>
+-          <i class="material-icons">&#xE165</i>
++          <span class="leto-aa" aria-hidden="true">Aa</span>
+         </button>
+         <div id="dialog-backdrop"></div>
+         <dialog id="settings-dialog">
+@@ -51,7 +45,7 @@ found in the LICENSE file.
+                 <option value="serif">$i18n{serifFont}</option>
+                 <option value="monospace">$i18n{monospaceFont}</option>
+               </select>
+-              <i class="material-icons" id="arrow-drop-down">&#xe5c5</i>
++              <svg id="arrow-drop-down" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+             </div>
+             <div class="setting">
+               <fieldset id="theme-selection">
+@@ -62,17 +56,17 @@ found in the LICENSE file.
+                   <li class="theme-option">
+                     <input type="radio" name="theme" value="light"
+                        aria-label="$i18n{light}" id="theme-option-light" class="light" checked>
+-                    <div class="checkmark"><i class="material-icons" aria-hidden="true">&#xE86c</i></div>
++                    <div class="checkmark"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="8" fill="currentColor"/><path d="M4.5 8.2l2.3 2.3 4.7-4.8" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+                   </li>
+                   <li class="theme-option">
+                     <input type="radio" name="theme" value="sepia"
+                        aria-label="$i18n{sepia}" id="theme-option-sepia" class="sepia">
+-                    <div class="checkmark"><i class="material-icons" aria-hidden="true">&#xE86c</i></div>
++                    <div class="checkmark"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="8" fill="currentColor"/><path d="M4.5 8.2l2.3 2.3 4.7-4.8" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+                   </li>
+                   <li class="theme-option">
+                     <input type="radio" name="theme" value="dark"
+                        aria-label="$i18n{dark}" id="theme-option-dark" class="dark">
+-                    <div class="checkmark"><i class="material-icons" aria-hidden="true">&#xE86c</i></div>
++                    <div class="checkmark"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="8" fill="currentColor"/><path d="M4.5 8.2l2.3 2.3 4.7-4.8" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+                   </li>
+                 </ul>
+               </fieldset>
+@@ -97,7 +91,7 @@ found in the LICENSE file.
+           </div>
+             <button id="close-settings-button" type="button"
+                 aria-label="$i18n{close}" tabindex=0>
+-              <i class="material-icons">close</i>
++              <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+             </button>
+         </dialog>
+       </div>
