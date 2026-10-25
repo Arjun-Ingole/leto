@@ -1,0 +1,191 @@
+--- a/chrome/browser/metrics/chrome_feature_list_creator.cc
++++ b/chrome/browser/metrics/chrome_feature_list_creator.cc
+@@ -2,8 +2,10 @@
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
++#include "build/build_config.h"
+ #include "chrome/browser/metrics/chrome_feature_list_creator.h"
+ 
++#include <functional>
+ #include <vector>
+ 
+ #include "base/command_line.h"
+@@ -39,6 +41,7 @@
+ #include "content/public/common/content_switches.h"
+ #include "services/network/public/cpp/network_switches.h"
+ #include "services/network/public/cpp/shared_url_loader_factory.h"
++#include "third_party/blink/public/common/features_generated.h"
+ #include "ui/base/resource/resource_bundle.h"
+ 
+ #if BUILDFLAG(IS_WIN)
+@@ -238,11 +241,19 @@ void ChromeFeatureListCreator::SetUpFiel
+ 
+   variations::VariationsService* variations_service =
+       metrics_services_manager_->GetVariationsService();
+-  variations_service->SetUpFieldTrials(
+-      variation_ids,
++  std::vector<base::FeatureList::FeatureOverrideInfo> extra_overrides =
+       content::GetSwitchDependentFeatureOverrides(
+-          *base::CommandLine::ForCurrentProcess()),
+-      std::move(feature_list), browser_field_trials_.get());
++          *base::CommandLine::ForCurrentProcess());
++#if BUILDFLAG(IS_MAC)
++  // Leto: a playing video pops out into picture-in-picture when you leave its
++  // tab or Space, as in Arc.
++  extra_overrides.emplace_back(
++      std::cref(blink::features::kBrowserInitiatedAutomaticPictureInPicture),
++      base::FeatureList::OVERRIDE_ENABLE_FEATURE);
++#endif
++  variations_service->SetUpFieldTrials(variation_ids, extra_overrides,
++                                       std::move(feature_list),
++                                       browser_field_trials_.get());
+   variations::InitCrashKeys();
+ }
+ 
+--- a/chrome/browser/ui/views/frame/browser_view.cc
++++ b/chrome/browser/ui/views/frame/browser_view.cc
+@@ -189,6 +189,7 @@
+ #include "chrome/browser/ui/views/frame/vertical_tab_strip_background_blur_backdrop.h"
+ #include "chrome/browser/ui/views/frame/vertical_tab_strip_region_view.h"
+ #include "chrome/browser/ui/views/leto/command_bar.h"
++#include "chrome/browser/ui/views/leto/space_switcher.h"
+ #include "chrome/browser/ui/views/frame/web_contents_close_handler.h"
+ #include "chrome/browser/ui/views/fullscreen_control/fullscreen_control_host.h"
+ #include "chrome/browser/ui/views/glic/glic_button_interface.h"
+@@ -2422,6 +2423,16 @@ void BrowserView::Activate() {
+     }
+   }
+ 
++#if BUILDFLAG(IS_MAC)
++  // A window that was shown before and is hidden now belongs to a space that
++  // isn't on screen, e.g. when "back to tab" in picture-in-picture asks for
++  // it. Switch to its space rather than showing it over the current one.
++  if (restore_focus_on_activation_.has_value() && !IsVisible() &&
++      leto::ShowSpace(browser_)) {
++    return;
++  }
++#endif
++
+ #if !BUILDFLAG(IS_WIN) && !BUILDFLAG(IS_CHROMEOS)
+   // Update the list managed by `BrowserList` synchronously the same way
+   // `BrowserView::Show()` does.
+--- a/chrome/browser/ui/views/leto/space_switcher.cc
++++ b/chrome/browser/ui/views/leto/space_switcher.cc
+@@ -11,21 +11,39 @@
+ #include "base/functional/bind.h"
+ #include "base/memory/weak_ptr.h"
+ #include "chrome/browser/browser_process.h"
++#include "chrome/browser/picture_in_picture/auto_picture_in_picture_tab_helper.h"
+ #include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/profiles/profile_attributes_entry.h"
+ #include "chrome/browser/profiles/profile_attributes_storage.h"
+ #include "chrome/browser/profiles/profile_manager.h"
+ #include "chrome/browser/profiles/profile_window.h"
+ #include "chrome/browser/ui/browser_window.h"
++#include "chrome/browser/ui/browser_window/public/browser_collection.h"
+ #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
+ #include "chrome/browser/ui/browser_window/public/profile_browser_collection.h"
++#include "chrome/browser/ui/tabs/tab_strip_model.h"
+ #include "chrome/browser/ui/views/leto/space_switcher_mac.h"
++#include "content/public/browser/web_contents.h"
+ #include "ui/gfx/geometry/rect.h"
+ 
+ namespace leto {
+ 
+ namespace {
+ 
++// Tells the active tab of `browser` that it is shown or hidden along with its
++// space, so a playing video moves into picture-in-picture as its space is left
++// and back out when it returns, as it does on tab switches.
++void SetActiveTabShown(BrowserWindowInterface* browser, bool shown) {
++  content::WebContents* contents =
++      browser ? browser->GetTabStripModel()->GetActiveWebContents() : nullptr;
++  if (auto* helper =
++          contents ? AutoPictureInPictureTabHelper::FromWebContents(contents)
++                   : nullptr) {
++    helper->OnTabActivatedChanged(shown);
++  }
++}
++
+ // Moves `target` onto `bounds` and reveals it in place of `source`.
+ void PresentInPlace(base::WeakPtr<BrowserWindowInterface> source,
+                     const gfx::Rect& bounds,
+@@ -47,6 +65,11 @@ void PresentInPlace(base::WeakPtr<Browse
+     return;
+   }
+ 
++  // Close the incoming space's picture-in-picture before the outgoing space
++  // opens its own.
++  SetActiveTabShown(target, /*shown=*/true);
++  SetActiveTabShown(source.get(), /*shown=*/false);
++
+   internal::CrossfadeToWindow(
+       source_window, target_window, bounds,
+       base::BindOnce(
+@@ -109,6 +132,36 @@ void SwitchSpace(BrowserWindowInterface*
+   SwitchToSpace(current, paths[((index + delta) % count + count) % count]);
+ }
+ 
++bool ShowSpace(BrowserWindowInterface* browser) {
++  BrowserWindow* window = BrowserWindow::FromBrowser(browser);
++  if (!window || window->IsVisible() ||
++      browser->GetType() != BrowserWindowInterface::Type::TYPE_NORMAL) {
++    return false;
++  }
++  // The space on screen is the most recently active visible window of another
++  // profile.
++  BrowserWindowInterface* shown = nullptr;
++  GlobalBrowserCollection::GetInstance()->ForEach(
++      [&](BrowserWindowInterface* other) {
++        BrowserWindow* other_window = BrowserWindow::FromBrowser(other);
++        if (other != browser &&
++            other->GetType() == BrowserWindowInterface::Type::TYPE_NORMAL &&
++            other->GetProfile() != browser->GetProfile() && other_window &&
++            other_window->IsVisible()) {
++          shown = other;
++          return false;
++        }
++        return true;
++      },
++      BrowserCollection::Order::kActivation);
++  if (!shown) {
++    return false;
++  }
++  PresentInPlace(shown->GetWeakPtr(),
++                 BrowserWindow::FromBrowser(shown)->GetBounds(), browser);
++  return true;
++}
++
+ void SwitchToSpace(BrowserWindowInterface* current,
+                    const base::FilePath& profile_path) {
+   Profile* profile = current->GetProfile();
+--- a/chrome/browser/ui/views/leto/space_switcher.h
++++ b/chrome/browser/ui/views/leto/space_switcher.h
+@@ -25,6 +25,11 @@ void SwitchSpace(BrowserWindowInterface*
+ void SwitchToSpace(BrowserWindowInterface* current,
+                    const base::FilePath& profile_path);
+ 
++// Brings `browser`'s hidden space on screen in place of the space shown now,
++// as when the picture-in-picture window's "back to tab" asks for a tab in
++// another space. Returns false if there is no other space on screen.
++bool ShowSpace(BrowserWindowInterface* browser);
++
+ }  // namespace leto
+ 
+ #endif  // CHROME_BROWSER_UI_VIEWS_LETO_SPACE_SWITCHER_H_
+--- a/components/content_settings/core/browser/content_settings_registry.cc
++++ b/components/content_settings/core/browser/content_settings_registry.cc
+@@ -639,8 +639,10 @@ void ContentSettingsRegistry::Init() {
+            ContentSettingsInfo::INHERIT_IN_INCOGNITO,
+            PermissionSettingsInfo::EXCEPTIONS_ON_SECURE_ORIGINS_ONLY);
+ 
++  // Leto: videos pop out when you leave their tab, as in Arc, without asking
++  // each site first. Sites can still be blocked in settings.
+   Register(ContentSettingsType::AUTO_PICTURE_IN_PICTURE,
+-           "auto-picture-in-picture", CONTENT_SETTING_ASK,
++           "auto-picture-in-picture", CONTENT_SETTING_ALLOW,
+            WebsiteSettingsInfo::UNSYNCABLE, /*allowlisted_primary_schemes=*/{},
+            /*valid_settings=*/
+            {CONTENT_SETTING_ALLOW, CONTENT_SETTING_BLOCK, CONTENT_SETTING_ASK},
