@@ -1,0 +1,242 @@
+--- a/chrome/browser/ui/views/frame/browser_view.cc
++++ b/chrome/browser/ui/views/frame/browser_view.cc
+@@ -2311,6 +2311,13 @@ void BrowserView::Show() {
+     return;
+   }
+ 
++#if BUILDFLAG(IS_MAC)
++  // A space opened ahead of time stays hidden until it's switched to.
++  if (leto::IsPrewarmingSpace(browser_)) {
++    return;
++  }
++#endif
++
+   if (auto* manager = InitialWebUIManager::From(browser())) {
+     if (manager->RequestDeferShow(base::BindOnce(
+             &BrowserView::Show, weak_ptr_factory_.GetWeakPtr()))) {
+@@ -2424,6 +2431,11 @@ void BrowserView::Activate() {
+   }
+ 
+ #if BUILDFLAG(IS_MAC)
++  // A space opened ahead of time stays hidden until it's switched to.
++  if (leto::IsPrewarmingSpace(browser_)) {
++    return;
++  }
++
+   // A window that was shown before and is hidden now belongs to a space that
+   // isn't on screen, e.g. when "back to tab" in picture-in-picture asks for
+   // it. Switch to its space rather than showing it over the current one.
+--- a/chrome/browser/ui/views/leto/space_bar_view.cc
++++ b/chrome/browser/ui/views/leto/space_bar_view.cc
+@@ -18,10 +18,12 @@
+ #include "chrome/browser/ui/color/chrome_color_id.h"
+ #include "chrome/browser/ui/profiles/profile_colors_util.h"
+ #include "chrome/browser/ui/views/leto/space_switcher.h"
++#include "ui/base/metadata/metadata_header_macros.h"
+ #include "ui/base/metadata/metadata_impl_macros.h"
+ #include "ui/base/models/image_model.h"
+ #include "ui/color/color_provider.h"
+ #include "ui/compositor/layer.h"
++#include "ui/events/event.h"
+ #include "ui/gfx/geometry/insets.h"
+ #include "ui/views/accessibility/view_accessibility.h"
+ #include "ui/views/border.h"
+@@ -32,6 +34,35 @@ namespace leto {
+ 
+ namespace {
+ 
++// A space's button. Hovering it opens the space ahead of time, so that
++// clicking switches as quickly as to a space visited before.
++class SpaceButton : public views::ImageButton {
++  METADATA_HEADER(SpaceButton, views::ImageButton)
++
++ public:
++  SpaceButton(PressedCallback callback,
++              const base::FilePath& profile_path,
++              bool is_current)
++      : views::ImageButton(std::move(callback)),
++        profile_path_(profile_path),
++        is_current_(is_current) {}
++
++  // views::ImageButton:
++  void OnMouseEntered(const ui::MouseEvent& event) override {
++    views::ImageButton::OnMouseEntered(event);
++    if (!is_current_) {
++      PrewarmSpace(profile_path_);
++    }
++  }
++
++ private:
++  const base::FilePath profile_path_;
++  const bool is_current_;
++};
++
++BEGIN_METADATA(SpaceButton)
++END_METADATA
++
+ constexpr int kIconSize = 16;
+ constexpr int kRingThickness = 2;
+ constexpr int kRingGap = 1;
+@@ -109,14 +140,16 @@ void SpaceBarView::Rebuild() {
+     }
+ 
+     const base::FilePath profile_path = entry->GetPath();
+-    auto button = std::make_unique<views::ImageButton>(base::BindRepeating(
+-        [](base::WeakPtr<BrowserWindowInterface> browser,
+-           const base::FilePath& path) {
+-          if (browser) {
+-            SwitchToSpace(browser.get(), path);
+-          }
+-        },
+-        browser_->GetWeakPtr(), profile_path));
++    auto button = std::make_unique<SpaceButton>(
++        base::BindRepeating(
++            [](base::WeakPtr<BrowserWindowInterface> browser,
++               const base::FilePath& path) {
++              if (browser) {
++                SwitchToSpace(browser.get(), path);
++              }
++            },
++            browser_->GetWeakPtr(), profile_path),
++        profile_path, profile_path == current_path);
+ 
+     button->SetImageModel(
+         views::Button::STATE_NORMAL,
+--- a/chrome/browser/ui/views/leto/space_switcher.cc
++++ b/chrome/browser/ui/views/leto/space_switcher.cc
+@@ -5,11 +5,13 @@
+ #include "chrome/browser/ui/views/leto/space_switcher.h"
+ 
+ #include <algorithm>
++#include <map>
+ #include <vector>
+ 
+ #include "base/files/file_path.h"
+ #include "base/functional/bind.h"
+ #include "base/memory/weak_ptr.h"
++#include "base/no_destructor.h"
+ #include "base/task/sequenced_task_runner.h"
+ #include "base/time/time.h"
+ #include "chrome/browser/browser_process.h"
+@@ -37,6 +39,17 @@ namespace {
+ // page has been marked as hidden by then.
+ constexpr base::TimeDelta kPictureInPictureDelay = base::Milliseconds(150);
+ 
++// Spaces opened ahead of time whose windows stay hidden until switched to,
++// with the switches waiting for windows that aren't ready yet.
++struct Prewarm {
++  bool ready = false;
++  std::vector<base::OnceCallback<void(BrowserWindowInterface*)>> waiters;
++};
++std::map<base::FilePath, Prewarm>& Prewarms() {
++  static base::NoDestructor<std::map<base::FilePath, Prewarm>> prewarms;
++  return *prewarms;
++}
++
+ // Tells the active tab of `browser` that it is shown or hidden along with its
+ // space, so a playing video moves into picture-in-picture as its space is left
+ // and back out when it returns, as it does on tab switches.
+@@ -57,6 +70,8 @@ void PresentInPlace(base::WeakPtr<Browse
+   if (!target) {
+     return;
+   }
++  // A space opened ahead of time may be shown now.
++  Prewarms().erase(target->GetProfile()->GetPath());
+   BrowserWindow* target_window = BrowserWindow::FromBrowser(target);
+   if (!target_window) {
+     return;
+@@ -102,6 +117,24 @@ void PresentInPlace(base::WeakPtr<Browse
+           source));
+ }
+ 
++void OnPrewarmed(const base::FilePath& profile_path,
++                 BrowserWindowInterface* browser) {
++  auto it = Prewarms().find(profile_path);
++  if (it == Prewarms().end()) {
++    return;
++  }
++  if (!browser) {
++    Prewarms().erase(it);
++    return;
++  }
++  it->second.ready = true;
++  // A switch arrived while the window was being opened; finish it now.
++  auto waiters = std::move(it->second.waiters);
++  for (auto& waiter : waiters) {
++    std::move(waiter).Run(browser);
++  }
++}
++
+ void OnTargetProfileLoaded(base::WeakPtr<BrowserWindowInterface> source,
+                            const gfx::Rect& bounds,
+                            Profile* profile) {
+@@ -109,6 +142,15 @@ void OnTargetProfileLoaded(base::WeakPtr
+     return;
+   }
+ 
++  // The space is being opened ahead of time; switch to it once it's ready
++  // rather than opening a second window.
++  if (auto it = Prewarms().find(profile->GetPath());
++      it != Prewarms().end() && !it->second.ready) {
++    it->second.waiters.push_back(
++        base::BindOnce(&PresentInPlace, source, bounds));
++    return;
++  }
++
+   // Hidden windows still count as being on the current workspace on macOS,
+   // so a space we switched away from earlier is found and reused here.
+   if (BrowserWindowInterface* existing =
+@@ -149,6 +191,35 @@ void SwitchSpace(BrowserWindowInterface*
+   SwitchToSpace(current, paths[((index + delta) % count + count) % count]);
+ }
+ 
++void PrewarmSpace(const base::FilePath& profile_path) {
++  if (Prewarms().contains(profile_path)) {
++    return;
++  }
++  Prewarms()[profile_path];
++  profiles::LoadProfileAsync(
++      profile_path,
++      base::BindOnce(
++          [](const base::FilePath& profile_path, Profile* profile) {
++            if (BrowserWindowInterface* existing =
++                    ProfileBrowserCollection::GetForProfile(profile)
++                        ->FindTabbedBrowser()) {
++              OnPrewarmed(profile_path, existing);
++              return;
++            }
++            profiles::OpenBrowserWindowForProfile(
++                base::BindOnce(&OnPrewarmed, profile_path),
++                /*always_create=*/false, /*is_new_profile=*/false,
++                /*open_command_line_urls=*/false, profile);
++          },
++          profile_path));
++}
++
++bool IsPrewarmingSpace(BrowserWindowInterface* browser) {
++  return browser->GetType() == BrowserWindowInterface::Type::TYPE_NORMAL &&
++         !browser->GetProfile()->IsOffTheRecord() &&
++         Prewarms().contains(browser->GetProfile()->GetPath());
++}
++
+ bool SwitchToSpaceOnScreen(const base::FilePath& profile_path) {
+   BrowserWindowInterface* shown = nullptr;
+   GlobalBrowserCollection::GetInstance()->ForEach(
+--- a/chrome/browser/ui/views/leto/space_switcher.h
++++ b/chrome/browser/ui/views/leto/space_switcher.h
+@@ -25,6 +25,15 @@ void SwitchSpace(BrowserWindowInterface*
+ void SwitchToSpace(BrowserWindowInterface* current,
+                    const base::FilePath& profile_path);
+ 
++// Opens the space of the profile at `profile_path` ahead of time without
++// showing it, so that switching to it later is as quick as switching to a space
++// visited before. For when a switch is likely, like hovering its button.
++void PrewarmSpace(const base::FilePath& profile_path);
++
++// True while `browser`'s space was opened ahead of time by PrewarmSpace() and
++// hasn't been switched to; its window stays hidden until then.
++bool IsPrewarmingSpace(BrowserWindowInterface* browser);
++
+ // Switches the space on screen, if any, to the profile at `profile_path`, as
+ // the menu bar's Profiles menu does. Returns false if no space is on screen.
+ bool SwitchToSpaceOnScreen(const base::FilePath& profile_path);
