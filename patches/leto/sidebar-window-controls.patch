@@ -36,7 +36,25 @@
    ExtensionKeybindingRegistryViews::From(browser_)->OnHostActivationChanged(
        active);
  
-@@ -6012,8 +6034,7 @@ void BrowserView::OnThemeChanged() {
+@@ -5607,6 +5629,17 @@ void BrowserView::Layout(PassKey) {
+     return;
+   }
+ 
++#if BUILDFLAG(IS_MAC)
++  // The window controls' opacity depends on whether the sidebar is drawn,
++  // which can change without a zen animation, e.g. while the window is first
++  // set up. Keep it in sync on every layout.
++  if (zen_mode_enabled_) {
++    if (auto* frame_view = GetFrameView()) {
++      frame_view->SetCaptionButtonsOpacity(GetMacCaptionButtonsOpacity(this));
++    }
++  }
++#endif
++
+   // Allow layout during AppKit fullscreen transitions so the compositor can
+   // render the updated geometry. Other platforms defer it until the transition
+   // completes.
+@@ -6012,8 +6045,7 @@ void BrowserView::OnThemeChanged() {
    if (zen_mode_enabled_) {
      if (auto* frame_view = GetFrameView()) {
  #if BUILDFLAG(IS_MAC)
@@ -46,7 +64,7 @@
  #else
        frame_view->SetCaptionButtonsOpacity(GetTopChromeRevealRatio());
  #endif
-@@ -6986,8 +7007,7 @@ void BrowserView::AnimationProgressed(co
+@@ -6986,8 +7018,7 @@ void BrowserView::AnimationProgressed(co
      // The window controls sit at the top of the sidebar, so show them while
      // either the toolbar or the sidebar is revealed.
      if (auto* frame_view = GetFrameView()) {
@@ -58,23 +76,22 @@
      if (top_chrome_animation) {
 --- a/chrome/browser/ui/views/frame/layout/browser_view_tabbed_layout_impl.cc
 +++ b/chrome/browser/ui/views/frame/layout/browser_view_tabbed_layout_impl.cc
-@@ -151,10 +151,16 @@ ZenModeLayoutState GetZenModeLayoutState
-   if (delegate.IsZenModeTopChromePinned()) {
-     state.vertical_tab_strip_top_padding = revealed_top_padding;
-   } else {
-+#if BUILDFLAG(IS_MAC)
-+    // Leto: the sidebar header shares its top row with the window controls,
-+    // so the floating strip starts at the top edge to keep them lined up.
-+    state.vertical_tab_strip_top_padding = 0;
-+#else
-     state.vertical_tab_strip_top_padding =
-         ScaleExtent(state.vertical_tab_strip_padding,
-                     1.0f - state.top_chrome_ratio) +
-         ScaleExtent(revealed_top_padding, state.top_chrome_ratio);
-+#endif
+@@ -145,6 +145,15 @@ ZenModeLayoutState GetZenModeLayoutState
    }
-   return state;
- }
+ 
+   state.vertical_tab_strip_padding = kZenModeVTSPadding;
++#if BUILDFLAG(IS_MAC)
++  // Leto: with the toolbar hidden, the sidebar's header shares its top row
++  // with the window controls. The floating strip slides in flush with the
++  // window edges, as the pinned one sits, so that row stays lined up.
++  if (!delegate.IsZenModeTopChromePinned()) {
++    state.vertical_tab_strip_padding = 0;
++    return state;
++  }
++#endif
+   const int revealed_top_padding =
+       std::max(0, GetGenericFrameRadius() -
+                       GetLayoutConstant(LayoutConstant::kHeliumBasePadding));
 --- a/chrome/browser/ui/views/frame/vertical_tab_strip_region_view.cc
 +++ b/chrome/browser/ui/views/frame/vertical_tab_strip_region_view.cc
 @@ -57,6 +57,7 @@
