@@ -29,3 +29,4 @@ leto/global-appearance.patch
 leto/emoji-avatars.patch
 leto/fix-bang-id-collision.patch
 leto/arc-sidebar-toolbar.patch
+leto/arc-command-bar.patch

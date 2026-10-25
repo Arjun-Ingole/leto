@@ -1,0 +1,976 @@
+--- a/chrome/browser/ui/BUILD.gn
++++ b/chrome/browser/ui/BUILD.gn
+@@ -3361,6 +3361,9 @@ static_library("ui") {
+       "views/helium/fullscreen_window_controls_mac.mm",
+       "views/helium/native_frame_materials_mac.h",
+       "views/helium/native_frame_materials_mac.mm",
++      "views/leto/command_bar.h",
++      "views/leto/command_bar_view.cc",
++      "views/leto/command_bar_view.h",
+       "views/leto/global_appearance.cc",
+       "views/leto/global_appearance.h",
+       "views/leto/sidebar_header_view.cc",
+--- a/chrome/browser/ui/browser_command_controller.cc
++++ b/chrome/browser/ui/browser_command_controller.cc
+@@ -164,6 +164,7 @@
+ 
+ #if BUILDFLAG(IS_MAC)
+ #include "chrome/browser/ui/browser_commands_mac.h"
++#include "chrome/browser/ui/views/leto/command_bar.h"
+ #include "chrome/browser/ui/views/leto/space_switcher.h"
+ #endif
+ 
+@@ -772,6 +773,13 @@ void BrowserCommandController::HandleCom
+       CloseWindow(browser_);
+       break;
+     case IDC_NEW_TAB: {
++#if BUILDFLAG(IS_MAC)
++      // Like Arc, ask what to open first; the tab is created on Enter.
++      if (leto::UsesCommandBar(browser_)) {
++        leto::ShowCommandBar(browser_, leto::CommandBarMode::kNewTab);
++        break;
++      }
++#endif
+       NewTab(browser_, NewTabTypes::kNewTabCommand);
+       break;
+     }
+--- a/chrome/browser/ui/views/frame/browser_view.cc
++++ b/chrome/browser/ui/views/frame/browser_view.cc
+@@ -188,6 +188,7 @@
+ #include "chrome/browser/ui/views/frame/top_controls_slide_controller.h"
+ #include "chrome/browser/ui/views/frame/vertical_tab_strip_background_blur_backdrop.h"
+ #include "chrome/browser/ui/views/frame/vertical_tab_strip_region_view.h"
++#include "chrome/browser/ui/views/leto/command_bar.h"
+ #include "chrome/browser/ui/views/frame/web_contents_close_handler.h"
+ #include "chrome/browser/ui/views/fullscreen_control/fullscreen_control_host.h"
+ #include "chrome/browser/ui/views/glic/glic_button_interface.h"
+@@ -2023,14 +2024,15 @@ void BrowserView::UpdateZenModeRevealFro
+   zen_last_cursor_ = cursor;
+ 
+ #if BUILDFLAG(IS_MAC)
+-  // The sidebar holds navigation, so the toolbar is not revealed by hovering
+-  // the top edge; it only shows while the address bar is in use.
+-  const bool in_top_trigger = false;
++  // The sidebar holds navigation and the command bar replaces the address bar,
++  // so hovering never reveals the toolbar.
++  const bool reveal_top =
++      !leto::UsesCommandBar(browser_) && IsPointInZenTopChromeBounds(cursor);
+ #else
+   const bool in_top_trigger = IsPointInZenTopTrigger(cursor);
+-#endif
+   const bool in_top_chrome = IsPointInZenTopChromeBounds(cursor);
+   const bool reveal_top = in_top_trigger || in_top_chrome;
++#endif
+ 
+   // Top bar takes precedence: don't reveal side chrome when the cursor
+   // is in the top trigger zone or over the revealed top chrome.
+@@ -2073,8 +2075,15 @@ void BrowserView::UpdateZenModeReveal(bo
+   }
+ 
+   // Keep the top chrome visible while the omnibox is focused.
+-  const bool omnibox_focused = toolbar_ && toolbar_->location_bar_view() &&
+-                               toolbar_->location_bar_view()->HasFocus();
++  bool omnibox_focused = toolbar_ && toolbar_->location_bar_view() &&
++                         toolbar_->location_bar_view()->HasFocus();
++#if BUILDFLAG(IS_MAC)
++  // The command bar stands in for the toolbar's address bar, which is never
++  // shown for focus.
++  if (leto::UsesCommandBar(browser_)) {
++    omnibox_focused = false;
++  }
++#endif
+   if (omnibox_focused) {
+     reveal_top = true;
+   }
+@@ -3053,6 +3062,18 @@ void BrowserView::SetFocusToLocationBar(
+     return;
+   }
+ 
++#if BUILDFLAG(IS_MAC)
++  // The toolbar stays hidden: the address bar opens as a command bar over the
++  // page when the user asks for it, and pages like the new tab page that
++  // focus it on their own leave focus where it is.
++  if (leto::UsesCommandBar(browser_)) {
++    if (is_user_initiated) {
++      leto::ShowCommandBar(browser_, leto::CommandBarMode::kCurrentTab);
++    }
++    return;
++  }
++#endif
++
+   // In zen mode, snap the toolbar to fully shown so the omnibox is visible
+   // and can receive focus.  A synchronous layout is required so the toolbar
+   // has non-zero height before FocusLocation runs.
+@@ -6896,6 +6917,34 @@ void BrowserView::OnWillChangeFocus(View
+ }
+ void BrowserView::OnDidChangeFocus(View* focused_before, View* focused_now) {
+   UpdateAccessibleNameForRootView();
++#if BUILDFLAG(IS_MAC)
++  // The toolbar is hidden while the command bar is in use, so focus that lands
++  // in it, such as the window's initial focus, goes to the page instead.
++  if (focused_now && toolbar_ && toolbar_->Contains(focused_now) &&
++      leto::UsesCommandBar(browser_)) {
++    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
++        FROM_HERE, base::BindOnce(
++                       [](base::WeakPtr<BrowserView> view) {
++                         if (!view || !view->toolbar_) {
++                           return;
++                         }
++                         views::FocusManager* focus_manager =
++                             view->GetFocusManager();
++                         if (!focus_manager ||
++                             !view->toolbar_->Contains(
++                                 focus_manager->GetFocusedView())) {
++                           return;
++                         }
++                         if (content::WebContents* contents =
++                                 view->GetActiveWebContents()) {
++                           contents->Focus();
++                         } else {
++                           focus_manager->ClearFocus();
++                         }
++                       },
++                       GetAsWeakPtr()));
++  }
++#endif
+   if (zen_mode_enabled_) {
+     UpdateZenModeRevealFromCursor();
+   }
+--- /dev/null
++++ b/chrome/browser/ui/views/leto/command_bar.h
+@@ -0,0 +1,30 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_VIEWS_LETO_COMMAND_BAR_H_
++#define CHROME_BROWSER_UI_VIEWS_LETO_COMMAND_BAR_H_
++
++class BrowserWindowInterface;
++
++namespace leto {
++
++// Arc style command bar: the address bar in a panel floating over the page,
++// used in place of the toolbar's address bar when the toolbar is hidden.
++
++enum class CommandBarMode {
++  // Opened with Cmd+L or the site pill: results open in the current tab.
++  kCurrentTab,
++  // Opened with Cmd+T: results open in a new tab.
++  kNewTab,
++};
++
++// True when the toolbar is hidden and the sidebar holds navigation, which is
++// when the command bar replaces the toolbar's address bar.
++bool UsesCommandBar(BrowserWindowInterface* browser);
++
++void ShowCommandBar(BrowserWindowInterface* browser, CommandBarMode mode);
++
++}  // namespace leto
++
++#endif  // CHROME_BROWSER_UI_VIEWS_LETO_COMMAND_BAR_H_
+--- /dev/null
++++ b/chrome/browser/ui/views/leto/command_bar_view.cc
+@@ -0,0 +1,672 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/views/leto/command_bar_view.h"
++
++#include <algorithm>
++#include <map>
++#include <memory>
++#include <string>
++#include <utility>
++
++#include "base/functional/bind.h"
++#include "base/location.h"
++#include "base/memory/weak_ptr.h"
++#include "base/no_destructor.h"
++#include "base/scoped_observation.h"
++#include "base/strings/utf_string_conversions.h"
++#include "base/task/sequenced_task_runner.h"
++#include "build/build_config.h"
++#include "chrome/browser/autocomplete/autocomplete_classifier_factory.h"
++#include "chrome/browser/autocomplete/chrome_autocomplete_provider_client.h"
++#include "chrome/browser/autocomplete/chrome_autocomplete_scheme_classifier.h"
++#include "chrome/browser/favicon/favicon_service_factory.h"
++#include "chrome/browser/history/history_service_factory.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/color/chrome_color_id.h"
++#include "chrome/browser/ui/navigator/browser_navigator.h"
++#include "chrome/browser/ui/navigator/browser_navigator_params.h"
++#include "chrome/browser/ui/tabs/tab_strip_model.h"
++#include "chrome/browser/ui/views/frame/browser_view.h"
++#include "chrome/common/pref_names.h"
++#include "chrome/common/webui_url_constants.h"
++#include "components/keyed_service/core/service_access_type.h"
++#include "components/omnibox/browser/autocomplete_classifier.h"
++#include "components/omnibox/browser/autocomplete_controller_config.h"
++#include "components/omnibox/browser/autocomplete_input.h"
++#include "components/omnibox/browser/autocomplete_match.h"
++#include "components/omnibox/browser/autocomplete_match_type.h"
++#include "components/omnibox/browser/autocomplete_result.h"
++#include "components/omnibox/browser/vector_icons.h"
++#include "components/prefs/pref_service.h"
++#include "components/vector_icons/vector_icons.h"
++#include "content/public/browser/web_contents.h"
++#include "third_party/metrics_proto/omnibox_event.pb.h"
++#include "ui/accessibility/ax_enums.mojom.h"
++#include "ui/base/accelerators/accelerator.h"
++#include "ui/base/accelerators/accelerator_manager.h"
++#include "ui/base/metadata/metadata_impl_macros.h"
++#include "ui/base/models/image_model.h"
++#include "ui/base/mojom/dialog_button.mojom.h"
++#include "ui/base/page_transition_types.h"
++#include "ui/base/window_open_disposition.h"
++#include "ui/events/event.h"
++#include "ui/events/keycodes/keyboard_codes.h"
++#include "ui/gfx/font.h"
++#include "ui/gfx/font_list.h"
++#include "ui/gfx/geometry/insets.h"
++#include "ui/gfx/geometry/rect.h"
++#include "ui/gfx/image/image.h"
++#include "ui/gfx/range/range.h"
++#include "ui/views/accessibility/view_accessibility.h"
++#include "ui/views/background.h"
++#include "ui/views/border.h"
++#include "ui/views/bubble/bubble_border.h"
++#include "ui/views/bubble/bubble_dialog_delegate_view.h"
++#include "ui/views/controls/button/button.h"
++#include "ui/views/controls/image_view.h"
++#include "ui/views/controls/label.h"
++#include "ui/views/controls/textfield/textfield.h"
++#include "ui/views/focus/focus_manager.h"
++#include "ui/views/layout/box_layout.h"
++#include "ui/views/layout/flex_layout.h"
++#include "ui/views/layout/layout_types.h"
++#include "ui/views/view_class_properties.h"
++#include "ui/views/widget/widget.h"
++#include "ui/views/widget/widget_delegate.h"
++#include "ui/views/widget/widget_observer.h"
++#include "ui/views/window/dialog_client_view.h"
++#include "url/gurl.h"
++
++namespace leto {
++
++namespace {
++
++constexpr int kMaxWidth = 640;
++constexpr float kWidthFraction = 0.55f;
++// The bar sits this far down the window, as a fraction of its height.
++constexpr float kTopFraction = 0.18f;
++constexpr int kCornerRadius = 12;
++constexpr int kInputHeight = 44;
++constexpr int kInputPadding = 14;
++constexpr int kInputIconSize = 16;
++constexpr int kInputFontSizeDelta = 2;
++constexpr int kResultsPadding = 6;
++constexpr int kRowHeight = 30;
++constexpr int kRowPadding = 8;
++constexpr int kRowCornerRadius = 8;
++constexpr int kRowIconSize = 16;
++constexpr size_t kMaxResults = 8;
++
++// TODO(leto): Localize.
++constexpr char16_t kPlaceholder[] = u"Search or Enter URL...";
++constexpr char16_t kSwitchToTab[] = u"Switch to Tab";
++
++bool IsTabMatch(const AutocompleteMatch& match) {
++  return match.has_tab_match.value_or(false) ||
++         match.type == omnibox::AutocompleteMatchType::kOpenTab;
++}
++
++}  // namespace
++
++// A row in the results list: icon, title, a dimmed URL or description, and
++// "Switch to Tab" for open tabs.
++class CommandBarResultView : public views::Button {
++  METADATA_HEADER(CommandBarResultView, views::Button)
++
++ public:
++  CommandBarResultView(CommandBarView* command_bar, size_t index)
++      : views::Button(base::BindRepeating(&CommandBarView::OpenResult,
++                                          base::Unretained(command_bar),
++                                          index)),
++        command_bar_(command_bar),
++        index_(index) {
++    auto* layout = SetLayoutManager(std::make_unique<views::FlexLayout>());
++    layout->SetOrientation(views::LayoutOrientation::kHorizontal)
++        .SetCrossAxisAlignment(views::LayoutAlignment::kCenter)
++        .SetInteriorMargin(gfx::Insets::VH(0, kRowPadding))
++        .SetMinimumCrossAxisSize(kRowHeight);
++
++    icon_ = AddChildView(std::make_unique<views::ImageView>());
++    icon_->SetImageSize(gfx::Size(kRowIconSize, kRowIconSize));
++    icon_->SetProperty(views::kMarginsKey, gfx::Insets::TLBR(0, 0, 0, 10));
++
++    title_ = AddChildView(std::make_unique<views::Label>());
++    title_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++    title_->SetEnabledColor(kColorOmniboxText);
++    title_->SetProperty(
++        views::kFlexBehaviorKey,
++        views::FlexSpecification(views::MinimumFlexSizeRule::kScaleToZero,
++                                 views::MaximumFlexSizeRule::kPreferred)
++            .WithOrder(2));
++
++    detail_ = AddChildView(std::make_unique<views::Label>());
++    detail_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++    detail_->SetEnabledColor(kColorOmniboxResultsTextDimmed);
++    detail_->SetProperty(views::kMarginsKey, gfx::Insets::TLBR(0, 6, 0, 0));
++    detail_->SetProperty(
++        views::kFlexBehaviorKey,
++        views::FlexSpecification(views::MinimumFlexSizeRule::kScaleToZero,
++                                 views::MaximumFlexSizeRule::kPreferred)
++            .WithOrder(1));
++
++    auto* spacer = AddChildView(std::make_unique<views::View>());
++    spacer->SetProperty(
++        views::kFlexBehaviorKey,
++        views::FlexSpecification(views::MinimumFlexSizeRule::kScaleToZero,
++                                 views::MaximumFlexSizeRule::kUnbounded)
++            .WithOrder(3));
++
++    chip_ = AddChildView(std::make_unique<views::Label>(kSwitchToTab));
++    chip_->SetEnabledColor(kColorOmniboxResultsTextDimmed);
++    chip_->SetBorder(views::CreateEmptyBorder(gfx::Insets::VH(2, 6)));
++    chip_->SetBackground(views::CreateRoundedRectBackground(
++        kColorOmniboxResultsChipBackground, 4));
++    chip_->SetProperty(views::kMarginsKey, gfx::Insets::TLBR(0, 12, 0, 0));
++    chip_->SetFontList(chip_->font_list().DeriveWithSizeDelta(-1));
++
++    GetViewAccessibility().SetRole(ax::mojom::Role::kListBoxOption);
++  }
++
++  // views::Button:
++  gfx::Size CalculatePreferredSize(
++      const views::SizeBounds& available_size) const override {
++    return gfx::Size(
++        views::Button::CalculatePreferredSize(available_size).width(),
++        kRowHeight);
++  }
++
++  void SetMatch(const AutocompleteMatch& match, FaviconCache& favicon_cache) {
++    weak_factory_.InvalidateWeakPtrs();
++
++    std::u16string title = match.contents;
++    std::u16string detail = match.description;
++    if (!AutocompleteMatch::IsSearchType(match.type) &&
++        !match.description.empty()) {
++      // Pages read best as their title, with the address after it.
++      title = match.description;
++      detail = match.contents;
++    }
++    title_->SetText(title);
++    detail_->SetText(detail.empty() ? detail : u"\u2013 " + detail);
++    detail_->SetVisible(!detail.empty());
++    chip_->SetVisible(IsTabMatch(match));
++    GetViewAccessibility().SetName(title + u" " + detail);
++
++    icon_->SetImage(ui::ImageModel::FromVectorIcon(
++        match.GetVectorIcon(/*is_bookmark=*/false), kColorOmniboxResultsIcon,
++        kRowIconSize));
++    if (!AutocompleteMatch::IsSearchType(match.type) &&
++        match.destination_url.is_valid()) {
++      gfx::Image favicon = favicon_cache.GetFaviconForPageUrl(
++          match.destination_url,
++          base::BindOnce(&CommandBarResultView::SetFavicon,
++                         weak_factory_.GetWeakPtr()));
++      if (!favicon.IsEmpty()) {
++        SetFavicon(favicon);
++      }
++    }
++  }
++
++  void SetSelected(bool selected) {
++    if (selected == selected_) {
++      return;
++    }
++    selected_ = selected;
++    SetBackground(
++        selected ? views::CreateRoundedRectBackground(
++                       kColorOmniboxResultsBackgroundSelected, kRowCornerRadius)
++                 : nullptr);
++  }
++
++  void OnMouseEntered(const ui::MouseEvent& event) override {
++    views::Button::OnMouseEntered(event);
++    command_bar_->SelectResult(index_);
++  }
++
++ private:
++  void SetFavicon(const gfx::Image& favicon) {
++    icon_->SetImage(ui::ImageModel::FromImage(favicon));
++  }
++
++  raw_ptr<CommandBarView> command_bar_;
++  const size_t index_;
++  bool selected_ = false;
++  raw_ptr<views::ImageView> icon_ = nullptr;
++  raw_ptr<views::Label> title_ = nullptr;
++  raw_ptr<views::Label> detail_ = nullptr;
++  raw_ptr<views::Label> chip_ = nullptr;
++  base::WeakPtrFactory<CommandBarResultView> weak_factory_{this};
++};
++
++BEGIN_METADATA(CommandBarResultView)
++END_METADATA
++
++namespace {
++
++// A browser window's command bar, created on first use and then hidden rather
++// than closed so it opens quickly and keeps its autocomplete state warm.
++class CommandBarHost : public views::WidgetObserver {
++ public:
++  explicit CommandBarHost(BrowserView* browser_view);
++  CommandBarHost(const CommandBarHost&) = delete;
++  CommandBarHost& operator=(const CommandBarHost&) = delete;
++  ~CommandBarHost() override;
++
++  static CommandBarHost* ForBrowserView(BrowserView* browser_view);
++
++  void Show(CommandBarMode mode);
++  // Hides the bar; with `refocus_page`, moves focus back to the page.
++  void Hide(bool refocus_page);
++
++  // views::WidgetObserver:
++  void OnWidgetDestroying(views::Widget* widget) override;
++
++ private:
++  static std::map<BrowserView*, CommandBarHost*>& Hosts();
++
++  void InterceptClose();
++  void OnCloseRequested(views::Widget::ClosedReason reason);
++  void UpdateBounds();
++
++  raw_ptr<BrowserView> browser_view_;
++  // Must outlive `widget_`.
++  std::unique_ptr<views::BubbleDialogDelegate> delegate_;
++  raw_ptr<CommandBarView> view_ = nullptr;
++  std::unique_ptr<views::Widget> widget_;
++  base::ScopedObservation<views::Widget, views::WidgetObserver> observation_{
++      this};
++  base::WeakPtrFactory<CommandBarHost> weak_factory_{this};
++};
++
++CommandBarHost::CommandBarHost(BrowserView* browser_view)
++    : browser_view_(browser_view) {
++  Hosts()[browser_view] = this;
++
++  // The bubble hangs from the anchor point and grows downwards as results
++  // come in; the view resizes it.
++  delegate_ = std::make_unique<views::BubbleDialogDelegate>(
++      views::BubbleAnchor(), views::BubbleBorder::TOP_CENTER,
++      views::BubbleBorder::STANDARD_SHADOW);
++  delegate_->SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
++  delegate_->SetShowCloseButton(false);
++  delegate_->set_margins(gfx::Insets());
++  delegate_->set_corner_radius(kCornerRadius);
++  delegate_->SetBackgroundColor(kColorOmniboxResultsBackground);
++  delegate_->set_parent_window(browser_view->GetWidget()->GetNativeView());
++  view_ = delegate_->SetContentsView(std::make_unique<CommandBarView>(
++      browser_view,
++      base::BindRepeating(&CommandBarHost::Hide, base::Unretained(this),
++                          /*refocus_page=*/true)));
++  UpdateBounds();
++
++  widget_ = views::BubbleDialogDelegate::CreateBubble(delegate_.get());
++  observation_.Observe(widget_.get());
++  InterceptClose();
++}
++
++CommandBarHost::~CommandBarHost() {
++  Hosts().erase(browser_view_);
++}
++
++// static
++std::map<BrowserView*, CommandBarHost*>& CommandBarHost::Hosts() {
++  static base::NoDestructor<std::map<BrowserView*, CommandBarHost*>> hosts;
++  return *hosts;
++}
++
++// static
++CommandBarHost* CommandBarHost::ForBrowserView(BrowserView* browser_view) {
++  auto it = Hosts().find(browser_view);
++  return it == Hosts().end() ? nullptr : it->second;
++}
++
++void CommandBarHost::Show(CommandBarMode mode) {
++  UpdateBounds();
++  widget_->Show();
++  view_->Start(mode);
++}
++
++void CommandBarHost::Hide(bool refocus_page) {
++  if (!widget_->IsVisible()) {
++    return;
++  }
++  widget_->Hide();
++  view_->Stop();
++  if (!refocus_page) {
++    return;
++  }
++  browser_view_->GetWidget()->Activate();
++  if (content::WebContents* contents = browser_view_->GetActiveWebContents()) {
++    contents->Focus();
++  }
++}
++
++void CommandBarHost::OnWidgetDestroying(views::Widget* widget) {
++  // The browser window is closing and took the bar's window with it.
++  observation_.Reset();
++  view_ = nullptr;
++  Hosts().erase(browser_view_);
++  base::SequencedTaskRunner::GetCurrentDefault()->DeleteSoon(FROM_HERE, this);
++}
++
++void CommandBarHost::InterceptClose() {
++  // Requests to close the bubble (Escape, clicking elsewhere) hide it instead.
++  // The override is consumed by each request, so it is set again each time.
++  widget_->MakeCloseSynchronous(base::BindOnce(
++      &CommandBarHost::OnCloseRequested, weak_factory_.GetWeakPtr()));
++}
++
++void CommandBarHost::OnCloseRequested(views::Widget::ClosedReason reason) {
++  InterceptClose();
++  Hide(/*refocus_page=*/reason != views::Widget::ClosedReason::kLostFocus);
++}
++
++void CommandBarHost::UpdateBounds() {
++  const gfx::Rect window_bounds = browser_view_->GetBoundsInScreen();
++  const int width = std::min(
++      kMaxWidth, static_cast<int>(window_bounds.width() * kWidthFraction));
++  delegate_->set_fixed_width(width);
++  if (views::Widget* widget = delegate_->GetWidget()) {
++    widget->client_view()->InvalidateLayout();
++  }
++  delegate_->SetAnchorRect(
++      gfx::Rect(window_bounds.CenterPoint().x() - width / 2,
++                window_bounds.y() +
++                    static_cast<int>(window_bounds.height() * kTopFraction),
++                width, 0));
++}
++
++}  // namespace
++
++bool UsesCommandBar(BrowserWindowInterface* browser) {
++#if BUILDFLAG(IS_MAC)
++  if (browser->GetType() != BrowserWindowInterface::Type::TYPE_NORMAL) {
++    return false;
++  }
++  const PrefService* prefs = browser->GetProfile()->GetPrefs();
++  return prefs->GetBoolean(prefs::kHeliumZenMode) &&
++         !prefs->GetBoolean(prefs::kHeliumZenModeTopChromePinned);
++#else
++  return false;
++#endif
++}
++
++void ShowCommandBar(BrowserWindowInterface* browser, CommandBarMode mode) {
++  BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser);
++  if (!browser_view || !browser_view->GetWidget()) {
++    return;
++  }
++  CommandBarHost* host = CommandBarHost::ForBrowserView(browser_view);
++  if (!host) {
++    host = new CommandBarHost(browser_view);
++  }
++  host->Show(mode);
++}
++
++CommandBarView::CommandBarView(BrowserView* browser_view,
++                               base::RepeatingClosure dismiss)
++    : browser_view_(browser_view),
++      dismiss_(std::move(dismiss)),
++      favicon_cache_(FaviconServiceFactory::GetForProfile(
++                         browser_view->browser()->GetProfile(),
++                         ServiceAccessType::EXPLICIT_ACCESS),
++                     HistoryServiceFactory::GetForProfile(
++                         browser_view->browser()->GetProfile(),
++                         ServiceAccessType::EXPLICIT_ACCESS)) {
++  Profile* profile = browser_view->browser()->GetProfile();
++  autocomplete_controller_ = std::make_unique<AutocompleteController>(
++      std::make_unique<ChromeAutocompleteProviderClient>(profile),
++      AutocompleteControllerConfig{
++          .provider_types = AutocompleteClassifier::DefaultOmniboxProviders(),
++          // List open tabs alongside history and suggestions.
++          .unscoped_open_tab_suggestions = true,
++          .show_iph_matches = false,
++      });
++  autocomplete_controller_->AddObserver(this);
++
++  SetLayoutManager(std::make_unique<views::BoxLayout>(
++      views::BoxLayout::Orientation::kVertical));
++
++  auto* input_row = AddChildView(std::make_unique<views::View>());
++  auto* input_layout =
++      input_row->SetLayoutManager(std::make_unique<views::BoxLayout>(
++          views::BoxLayout::Orientation::kHorizontal,
++          gfx::Insets::VH(0, kInputPadding), 12));
++  input_layout->set_cross_axis_alignment(
++      views::BoxLayout::CrossAxisAlignment::kCenter);
++  input_layout->set_minimum_cross_axis_size(kInputHeight);
++  input_row->AddChildView(
++      std::make_unique<views::ImageView>(ui::ImageModel::FromVectorIcon(
++          vector_icons::kSearchIcon, kColorOmniboxResultsIcon,
++          kInputIconSize)));
++
++  textfield_ = input_row->AddChildView(std::make_unique<views::Textfield>());
++  textfield_->set_controller(this);
++  textfield_->SetBorder(views::NullBorder());
++  textfield_->SetBackgroundEnabled(false);
++  textfield_->SetFontList(
++      gfx::FontList().DeriveWithSizeDelta(kInputFontSizeDelta));
++  textfield_->SetTextColorId(kColorOmniboxText);
++  textfield_->SetPlaceholderText(kPlaceholder);
++  textfield_->SetPlaceholderTextColorId(kColorOmniboxTextDimmed);
++  textfield_->GetViewAccessibility().SetName(kPlaceholder);
++  input_layout->SetFlexForView(textfield_, 1);
++
++  results_ = AddChildView(std::make_unique<views::View>());
++  results_->SetLayoutManager(std::make_unique<views::BoxLayout>(
++      views::BoxLayout::Orientation::kVertical,
++      gfx::Insets::TLBR(0, kResultsPadding, kResultsPadding, kResultsPadding)));
++  results_->SetVisible(false);
++}
++
++CommandBarView::~CommandBarView() {
++  autocomplete_controller_->RemoveObserver(this);
++}
++
++void CommandBarView::Start(CommandBarMode mode) {
++  mode_ = mode;
++  Stop();
++
++  // Cmd+L edits the current address; Cmd+T starts from an empty field.
++  std::u16string text;
++  content::WebContents* contents = browser_view_->GetActiveWebContents();
++  if (mode_ == CommandBarMode::kCurrentTab && contents) {
++    const GURL& url = contents->GetVisibleURL();
++    if (!url.is_empty() && url.host() != chrome::kChromeUINewTabHost) {
++      text = base::UTF8ToUTF16(url.spec());
++    }
++  }
++  user_text_ = text;
++  textfield_->SetText(text);
++  textfield_->SelectAll(/*reversed=*/false);
++  textfield_->RequestFocus();
++}
++
++void CommandBarView::Stop() {
++  autocomplete_controller_->Stop(AutocompleteStopReason::kClobbered);
++  selected_index_.reset();
++  UpdateResults();
++}
++
++void CommandBarView::SelectResult(size_t index) {
++  if (index >= result_views_.size() || selected_index_ == index) {
++    return;
++  }
++  if (selected_index_ && *selected_index_ < result_views_.size()) {
++    result_views_[*selected_index_]->SetSelected(false);
++  }
++  selected_index_ = index;
++  result_views_[index]->SetSelected(true);
++}
++
++void CommandBarView::OpenResult(size_t index) {
++  const AutocompleteResult& result = autocomplete_controller_->result();
++  if (index < result.size()) {
++    OpenMatch(result.match_at(index));
++  }
++}
++
++void CommandBarView::AddedToWidget() {
++  // Escape dismisses the bar at once, even while there is text to clear.
++  GetFocusManager()->RegisterAccelerator(
++      ui::Accelerator(ui::VKEY_ESCAPE, ui::EF_NONE),
++      ui::AcceleratorManager::kHighPriority, this);
++}
++
++void CommandBarView::RemovedFromWidget() {
++  if (views::FocusManager* focus_manager = GetFocusManager()) {
++    focus_manager->UnregisterAccelerators(this);
++  }
++}
++
++bool CommandBarView::AcceleratorPressed(const ui::Accelerator& accelerator) {
++  dismiss_.Run();
++  return true;
++}
++
++bool CommandBarView::CanHandleAccelerators() const {
++  return GetWidget() && GetWidget()->IsVisible();
++}
++
++void CommandBarView::ContentsChanged(views::Textfield* sender,
++                                     const std::u16string& new_contents) {
++  // Deleting text, including a suggested completion, should not bring the
++  // completion straight back.
++  const bool deleting = new_contents.size() <= user_text_.size();
++  user_text_ = new_contents;
++  StartQuery(/*prevent_inline_autocomplete=*/deleting);
++}
++
++bool CommandBarView::HandleKeyEvent(views::Textfield* sender,
++                                    const ui::KeyEvent& key_event) {
++  if (key_event.type() != ui::EventType::kKeyPressed) {
++    return false;
++  }
++  switch (key_event.key_code()) {
++    case ui::VKEY_DOWN:
++    case ui::VKEY_UP: {
++      if (result_views_.empty()) {
++        return true;
++      }
++      const size_t count = result_views_.size();
++      const size_t current = selected_index_.value_or(0);
++      SelectResult(key_event.key_code() == ui::VKEY_DOWN
++                       ? (current + 1) % count
++                       : (current + count - 1) % count);
++      return true;
++    }
++    case ui::VKEY_RETURN: {
++      if (selected_index_) {
++        OpenResult(*selected_index_);
++        return true;
++      }
++      // Nothing listed yet: open what was typed.
++      if (textfield_->GetText().empty()) {
++        return true;
++      }
++      AutocompleteMatch match;
++      AutocompleteClassifierFactory::GetForProfile(
++          browser_view_->browser()->GetProfile())
++          ->Classify(std::u16string(textfield_->GetText()), false, false,
++                     metrics::OmniboxEventProto::OTHER, &match, nullptr);
++      if (match.destination_url.is_valid()) {
++        OpenMatch(match);
++      }
++      return true;
++    }
++    default:
++      return false;
++  }
++}
++
++void CommandBarView::OnResultChanged(AutocompleteController* controller,
++                                     bool default_match_changed) {
++  const AutocompleteMatch* default_match = controller->result().default_match();
++  if (default_match && !default_match->inline_autocompletion.empty() &&
++      !controller->input().prevent_inline_autocomplete() &&
++      controller->input().text() == user_text_ &&
++      textfield_->GetText() == user_text_) {
++    // Complete the address inline, selected so typing replaces it.
++    textfield_->SetText(user_text_ + default_match->inline_autocompletion);
++    textfield_->SetSelectedRange(
++        gfx::Range(user_text_.size(), textfield_->GetText().size()));
++  }
++  UpdateResults();
++}
++
++void CommandBarView::StartQuery(bool prevent_inline_autocomplete) {
++  if (user_text_.empty()) {
++    autocomplete_controller_->Stop(AutocompleteStopReason::kClobbered);
++    UpdateResults();
++    return;
++  }
++  Profile* profile = browser_view_->browser()->GetProfile();
++  AutocompleteInput input(user_text_, metrics::OmniboxEventProto::OTHER,
++                          ChromeAutocompleteSchemeClassifier(profile));
++  if (content::WebContents* contents = browser_view_->GetActiveWebContents()) {
++    input.set_current_url(contents->GetVisibleURL());
++  }
++  input.set_prevent_inline_autocomplete(prevent_inline_autocomplete);
++  autocomplete_controller_->Start(input);
++}
++
++void CommandBarView::UpdateResults() {
++  const AutocompleteResult& result = autocomplete_controller_->result();
++  const size_t count =
++      user_text_.empty() ? 0 : std::min(result.size(), kMaxResults);
++
++  if (result_views_.size() != count) {
++    results_->RemoveAllChildViews();
++    result_views_.clear();
++    for (size_t i = 0; i < count; ++i) {
++      result_views_.push_back(results_->AddChildView(
++          std::make_unique<CommandBarResultView>(this, i)));
++    }
++  }
++  for (size_t i = 0; i < count; ++i) {
++    result_views_[i]->SetMatch(result.match_at(i), favicon_cache_);
++    result_views_[i]->SetSelected(false);
++  }
++  selected_index_.reset();
++  if (count > 0) {
++    // The first result is what Enter opens.
++    SelectResult(0);
++  }
++
++  results_->SetVisible(count > 0);
++  PreferredSizeChanged();
++  // Fit the bubble to the list as it grows and shrinks.
++  if (views::Widget* widget = GetWidget()) {
++    if (auto* bubble = widget->widget_delegate()->AsBubbleDialogDelegate()) {
++      bubble->SizeToContents();
++    }
++  }
++}
++
++void CommandBarView::OpenMatch(const AutocompleteMatch& match) {
++  BrowserWindowInterface* browser = browser_view_->browser();
++  WindowOpenDisposition disposition =
++      mode_ == CommandBarMode::kNewTab
++          ? WindowOpenDisposition::NEW_FOREGROUND_TAB
++          : WindowOpenDisposition::CURRENT_TAB;
++  if (IsTabMatch(match)) {
++    disposition = WindowOpenDisposition::SWITCH_TO_TAB;
++  }
++  NavigateParams params(
++      browser, match.destination_url,
++      ui::PageTransitionFromInt(match.transition |
++                                ui::PAGE_TRANSITION_FROM_ADDRESS_BAR));
++  params.disposition = disposition;
++
++  // Hiding clears the results, which `match` may point into.
++  dismiss_.Run();
++  Navigate(&params);
++}
++
++BEGIN_METADATA(CommandBarView)
++END_METADATA
++
++}  // namespace leto
+--- /dev/null
++++ b/chrome/browser/ui/views/leto/command_bar_view.h
+@@ -0,0 +1,94 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_VIEWS_LETO_COMMAND_BAR_VIEW_H_
++#define CHROME_BROWSER_UI_VIEWS_LETO_COMMAND_BAR_VIEW_H_
++
++#include <memory>
++#include <optional>
++#include <string>
++#include <vector>
++
++#include "base/functional/callback.h"
++#include "base/memory/raw_ptr.h"
++#include "chrome/browser/ui/views/leto/command_bar.h"
++#include "components/omnibox/browser/autocomplete_controller.h"
++#include "components/omnibox/browser/favicon_cache.h"
++#include "ui/base/metadata/metadata_header_macros.h"
++#include "ui/views/controls/textfield/textfield_controller.h"
++#include "ui/views/view.h"
++
++class BrowserView;
++struct AutocompleteMatch;
++
++namespace views {
++class Textfield;
++}  // namespace views
++
++namespace leto {
++
++class CommandBarResultView;
++
++// Contents of the command bar, as in Arc: a large search field over the page
++// with the autocomplete results (history, open tabs, suggestions) listed in
++// the same panel below it.
++class CommandBarView : public views::View,
++                       public views::TextfieldController,
++                       public AutocompleteController::Observer {
++  METADATA_HEADER(CommandBarView, views::View)
++
++ public:
++  CommandBarView(BrowserView* browser_view, base::RepeatingClosure dismiss);
++  CommandBarView(const CommandBarView&) = delete;
++  CommandBarView& operator=(const CommandBarView&) = delete;
++  ~CommandBarView() override;
++
++  // Resets the field for `mode` and focuses it; call once the bubble is shown.
++  void Start(CommandBarMode mode);
++  // Stops any running query and clears the results; call when hidden.
++  void Stop();
++
++  // For the result rows.
++  void SelectResult(size_t index);
++  void OpenResult(size_t index);
++
++  // views::View:
++  void AddedToWidget() override;
++  void RemovedFromWidget() override;
++  bool AcceleratorPressed(const ui::Accelerator& accelerator) override;
++  bool CanHandleAccelerators() const override;
++
++  // views::TextfieldController:
++  void ContentsChanged(views::Textfield* sender,
++                       const std::u16string& new_contents) override;
++  bool HandleKeyEvent(views::Textfield* sender,
++                      const ui::KeyEvent& key_event) override;
++
++  // AutocompleteController::Observer:
++  void OnResultChanged(AutocompleteController* controller,
++                       bool default_match_changed) override;
++
++ private:
++  void StartQuery(bool prevent_inline_autocomplete);
++  void UpdateResults();
++  void OpenMatch(const AutocompleteMatch& match);
++
++  raw_ptr<BrowserView> browser_view_;
++  base::RepeatingClosure dismiss_;
++  CommandBarMode mode_ = CommandBarMode::kCurrentTab;
++
++  std::unique_ptr<AutocompleteController> autocomplete_controller_;
++  FaviconCache favicon_cache_;
++  // What the user typed, without inline autocompletion.
++  std::u16string user_text_;
++  std::optional<size_t> selected_index_;
++
++  raw_ptr<views::Textfield> textfield_ = nullptr;
++  raw_ptr<views::View> results_ = nullptr;
++  std::vector<raw_ptr<CommandBarResultView>> result_views_;
++};
++
++}  // namespace leto
++
++#endif  // CHROME_BROWSER_UI_VIEWS_LETO_COMMAND_BAR_VIEW_H_
+--- a/chrome/browser/ui/browser_actions.cc
++++ b/chrome/browser/ui/browser_actions.cc
+@@ -20,6 +20,7 @@
+ #include "base/notreached.h"
+ #include "base/types/to_address.h"
+ #include "build/branding_buildflags.h"
++#include "build/build_config.h"
+ #include "chrome/app/chrome_command_ids.h"
+ #include "chrome/app/vector_icons/vector_icons.h"
+ #include "chrome/browser/browsing_data/browsing_data_important_sites_util.h"
+@@ -163,6 +164,7 @@
+ #include "chrome/browser/ui/views/frame/browser_view.h"
+ #include "chrome/browser/ui/views/frame/toolbar_button_provider.h"
+ #include "chrome/browser/ui/views/js_optimization/js_optimizations_page_action_controller.h"
++#include "chrome/browser/ui/views/leto/command_bar.h"
+ #include "chrome/browser/ui/views/location_bar/cookie_controls/cookie_controls_page_action_controller.h"
+ #include "chrome/browser/ui/views/location_bar/lens_overlay_homework_page_action_controller.h"
+ #include "chrome/browser/ui/views/location_bar/record_replay_page_action_controller.h"
+@@ -1093,6 +1095,14 @@ void BrowserActions::InitializeChromeMen
+           base::BindRepeating(
+               [](BrowserWindowInterface* bwi, actions::ActionItem* item,
+                  actions::ActionInvocationContext context) {
++#if BUILDFLAG(IS_MAC)
++                // As with Cmd+T, the sidebar's new tab button asks where to go
++                // first.
++                if (leto::UsesCommandBar(bwi)) {
++                  leto::ShowCommandBar(bwi, leto::CommandBarMode::kNewTab);
++                  return;
++                }
++#endif
+                 chrome::NewTab(bwi, NewTabTypes::kNewTabCommand);
+               },
+               bwi))
