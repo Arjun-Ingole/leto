@@ -1,0 +1,53 @@
+--- a/chrome/browser/ui/views/leto/sidebar_header_view.cc
++++ b/chrome/browser/ui/views/leto/sidebar_header_view.cc
+@@ -27,6 +27,7 @@
+ #include "content/public/browser/navigation_entry.h"
+ #include "content/public/browser/navigation_handle.h"
+ #include "content/public/browser/web_contents.h"
++#include "ui/base/metadata/metadata_header_macros.h"
+ #include "ui/base/metadata/metadata_impl_macros.h"
+ #include "ui/base/models/image_model.h"
+ #include "ui/gfx/geometry/insets.h"
+@@ -34,6 +35,7 @@
+ #include "ui/views/background.h"
+ #include "ui/views/controls/button/image_button.h"
+ #include "ui/views/controls/button/label_button.h"
++#include "ui/views/controls/label.h"
+ #include "ui/views/layout/box_layout.h"
+ #include "ui/views/widget/widget.h"
+ #include "url/gurl.h"
+@@ -78,6 +80,23 @@ std::unique_ptr<views::ImageButton> Make
+   return button;
+ }
+ 
++// The site pill's text button. The sidebar paints to a layer that isn't
++// opaque, so, as with the sidebar's other buttons, its text can't use subpixel
++// rendering.
++class SiteButton : public views::LabelButton {
++  METADATA_HEADER(SiteButton, views::LabelButton)
++
++ public:
++  explicit SiteButton(PressedCallback callback)
++      : views::LabelButton(std::move(callback), std::u16string()) {
++    label()->SetSubpixelRenderingEnabled(false);
++    label()->SetSkipSubpixelRenderingOpacityCheck(true);
++  }
++};
++
++BEGIN_METADATA(SiteButton)
++END_METADATA
++
+ // The text for the site pill: the host for web pages, the title otherwise.
+ std::u16string SiteText(content::WebContents* contents) {
+   const GURL& url = contents->GetVisibleURL();
+@@ -141,8 +160,8 @@ SidebarHeaderView::SidebarHeaderView(Bro
+       views::BoxLayout::CrossAxisAlignment::kCenter);
+   pill_layout->set_minimum_cross_axis_size(kPillHeight);
+ 
+-  site_button_ = pill->AddChildView(std::make_unique<views::LabelButton>(
+-      command(browser_, IDC_FOCUS_LOCATION), std::u16string()));
++  site_button_ = pill->AddChildView(
++      std::make_unique<SiteButton>(command(browser_, IDC_FOCUS_LOCATION)));
+   site_button_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
+   site_button_->SetLabelStyle(views::style::STYLE_BODY_4);
+   site_button_->SetMinSize(gfx::Size(0, kPillButtonSize));
