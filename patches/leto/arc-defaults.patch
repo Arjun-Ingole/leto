@@ -1,0 +1,24 @@
+--- a/chrome/browser/prefs/session_startup_pref.cc
++++ b/chrome/browser/prefs/session_startup_pref.cc
+@@ -63,7 +63,8 @@ void SessionStartupPref::RegisterProfile
+ 
+ // static
+ SessionStartupPref::Type SessionStartupPref::GetDefaultStartupType() {
+-#if BUILDFLAG(IS_CHROMEOS)
++#if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_MAC)
++  // Leto: each Space reopens with the tabs it had, as in Arc.
+   return SessionStartupPref::LAST;
+ #else
+ #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC)
+--- a/chrome/browser/profiles/profile.cc
++++ b/chrome/browser/profiles/profile.cc
+@@ -329,7 +329,8 @@ const char Profile::kProfileKey[] = "__P
+ void Profile::RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
+   registry->RegisterBooleanPref(
+       prefs::kSearchSuggestEnabled,
+-      false,
++      // Leto: suggestions are part of the command bar, as in Arc.
++      true,
+       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+ #if BUILDFLAG(IS_ANDROID)
+   registry->RegisterStringPref(
