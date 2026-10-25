@@ -1,0 +1,101 @@
+--- a/chrome/browser/ui/views/frame/browser_view.cc
++++ b/chrome/browser/ui/views/frame/browser_view.cc
+@@ -2176,6 +2176,18 @@ bool BrowserView::IsPointInZenSideTrigge
+ 
+ namespace {
+ 
++#if BUILDFLAG(IS_MAC)
++// The window controls sit at the top of the sidebar, so they show while either
++// the toolbar or the sidebar does, and always while the sidebar is pinned.
++float GetMacCaptionButtonsOpacity(const BrowserView* view) {
++  if (view->IsZenModeSideChromePinned() && view->ShouldDrawVerticalTabStrip()) {
++    return 1.f;
++  }
++  return std::max(view->GetTopChromeRevealRatio(),
++                  view->GetSideChromeRevealRatio());
++}
++#endif
++
+ bool IsOpenBubbleAnchoredInViewSubtree(views::Widget* widget,
+                                        const views::View* anchor_root) {
+   if (!widget || widget->IsClosed() || !widget->IsVisible()) {
+@@ -4915,6 +4927,16 @@ void BrowserView::OnWidgetActivationChan
+     UpdateZenModeReveal(/*reveal_top=*/false, /*reveal_side=*/false);
+   }
+ 
++#if BUILDFLAG(IS_MAC)
++  // AppKit may recreate the window controls when a hidden window is shown
++  // again, as when switching Spaces, so restore their opacity.
++  if (active && zen_mode_enabled_) {
++    if (auto* frame_view = GetFrameView()) {
++      frame_view->SetCaptionButtonsOpacity(GetMacCaptionButtonsOpacity(this));
++    }
++  }
++#endif
++
+   ExtensionKeybindingRegistryViews::From(browser_)->OnHostActivationChanged(
+       active);
+ 
+@@ -6012,8 +6034,7 @@ void BrowserView::OnThemeChanged() {
+   if (zen_mode_enabled_) {
+     if (auto* frame_view = GetFrameView()) {
+ #if BUILDFLAG(IS_MAC)
+-      frame_view->SetCaptionButtonsOpacity(
+-          std::max(GetTopChromeRevealRatio(), GetSideChromeRevealRatio()));
++      frame_view->SetCaptionButtonsOpacity(GetMacCaptionButtonsOpacity(this));
+ #else
+       frame_view->SetCaptionButtonsOpacity(GetTopChromeRevealRatio());
+ #endif
+@@ -6986,8 +7007,7 @@ void BrowserView::AnimationProgressed(co
+     // The window controls sit at the top of the sidebar, so show them while
+     // either the toolbar or the sidebar is revealed.
+     if (auto* frame_view = GetFrameView()) {
+-      frame_view->SetCaptionButtonsOpacity(
+-          std::max(GetTopChromeRevealRatio(), GetSideChromeRevealRatio()));
++      frame_view->SetCaptionButtonsOpacity(GetMacCaptionButtonsOpacity(this));
+     }
+ #else
+     if (top_chrome_animation) {
+--- a/chrome/browser/ui/views/frame/layout/browser_view_tabbed_layout_impl.cc
++++ b/chrome/browser/ui/views/frame/layout/browser_view_tabbed_layout_impl.cc
+@@ -151,10 +151,16 @@ ZenModeLayoutState GetZenModeLayoutState
+   if (delegate.IsZenModeTopChromePinned()) {
+     state.vertical_tab_strip_top_padding = revealed_top_padding;
+   } else {
++#if BUILDFLAG(IS_MAC)
++    // Leto: the sidebar header shares its top row with the window controls,
++    // so the floating strip starts at the top edge to keep them lined up.
++    state.vertical_tab_strip_top_padding = 0;
++#else
+     state.vertical_tab_strip_top_padding =
+         ScaleExtent(state.vertical_tab_strip_padding,
+                     1.0f - state.top_chrome_ratio) +
+         ScaleExtent(revealed_top_padding, state.top_chrome_ratio);
++#endif
+   }
+   return state;
+ }
+--- a/chrome/browser/ui/views/frame/vertical_tab_strip_region_view.cc
++++ b/chrome/browser/ui/views/frame/vertical_tab_strip_region_view.cc
+@@ -57,6 +57,7 @@
+ #include "chrome/browser/ui/views/tabs/vertical/vertical_tab_strip_focus_swipe_controller.h"
+ 
+ #if BUILDFLAG(IS_MAC)
++#include "chrome/browser/ui/views/leto/command_bar.h"
+ #include "chrome/browser/ui/views/leto/sidebar_header_view.h"
+ #endif
+ #include "chrome/browser/ui/web_applications/app_browser_controller.h"
+@@ -915,6 +916,13 @@ void VerticalTabStripRegionView::UpdateI
+             : 1.0f - top_chrome_ratio;
+     top_padding = base::ClampRound(
+         GetLayoutConstant(LayoutConstant::kVerticalTabCornerRadius) * ratio);
++#if BUILDFLAG(IS_MAC)
++    // The sidebar header lines its buttons up with the window controls
++    // itself.
++    if (leto::UsesCommandBar(browser->browser())) {
++      top_padding = 0;
++    }
++#endif
+   }
+ 
+   interior_margin_ = gfx::Insets::TLBR(top_padding, 0, padding, 0);
