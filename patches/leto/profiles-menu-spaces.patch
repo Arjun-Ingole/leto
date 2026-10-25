@@ -1,0 +1,82 @@
+--- a/chrome/browser/ui/cocoa/profiles/profile_menu_controller.mm
++++ b/chrome/browser/ui/cocoa/profiles/profile_menu_controller.mm
+@@ -25,6 +25,7 @@
+ #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
+ #include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
+ #include "chrome/browser/ui/ui_features.h"
++#include "chrome/browser/ui/views/leto/space_switcher.h"
+ #include "chrome/common/pref_names.h"
+ #include "chrome/grit/generated_resources.h"
+ #include "components/prefs/pref_service.h"
+@@ -144,13 +145,22 @@ class Observer : public BrowserCollectio
+ }
+ 
+ - (IBAction)switchToProfileFromMenu:(id)sender {
+-  _avatarMenu->SwitchToProfile([sender tag], false);
++  [self switchToProfileAtIndex:[sender tag]];
+ }
+ 
+ - (IBAction)switchToProfileFromDock:(id)sender {
+   // Explicitly bring to the foreground when taking action from the dock.
+   [NSApp activateIgnoringOtherApps:YES];
+-  _avatarMenu->SwitchToProfile([sender tag], false);
++  [self switchToProfileAtIndex:[sender tag]];
++}
++
++// Leto: profiles are spaces that share one window, so switch the space on
++// screen in place rather than opening another window.
++- (void)switchToProfileAtIndex:(size_t)index {
++  if (leto::SwitchToSpaceOnScreen(_avatarMenu->GetItemAt(index).profile_path)) {
++    return;
++  }
++  _avatarMenu->SwitchToProfile(index, false);
+ }
+ 
+ - (IBAction)editProfile:(id)sender {
+--- a/chrome/browser/ui/views/leto/space_switcher.cc
++++ b/chrome/browser/ui/views/leto/space_switcher.cc
+@@ -149,6 +149,31 @@ void SwitchSpace(BrowserWindowInterface*
+   SwitchToSpace(current, paths[((index + delta) % count + count) % count]);
+ }
+ 
++bool SwitchToSpaceOnScreen(const base::FilePath& profile_path) {
++  BrowserWindowInterface* shown = nullptr;
++  GlobalBrowserCollection::GetInstance()->ForEach(
++      [&](BrowserWindowInterface* browser) {
++        BrowserWindow* window = BrowserWindow::FromBrowser(browser);
++        if (browser->GetType() == BrowserWindowInterface::Type::TYPE_NORMAL &&
++            !browser->GetProfile()->IsOffTheRecord() && window &&
++            window->IsVisible()) {
++          shown = browser;
++          return false;
++        }
++        return true;
++      },
++      BrowserCollection::Order::kActivation);
++  if (!shown) {
++    return false;
++  }
++  if (shown->GetProfile()->GetPath() == profile_path) {
++    BrowserWindow::FromBrowser(shown)->Activate();
++  } else {
++    SwitchToSpace(shown, profile_path);
++  }
++  return true;
++}
++
+ bool ShowSpace(BrowserWindowInterface* browser) {
+   BrowserWindow* window = BrowserWindow::FromBrowser(browser);
+   if (!window || window->IsVisible() ||
+--- a/chrome/browser/ui/views/leto/space_switcher.h
++++ b/chrome/browser/ui/views/leto/space_switcher.h
+@@ -25,6 +25,10 @@ void SwitchSpace(BrowserWindowInterface*
+ void SwitchToSpace(BrowserWindowInterface* current,
+                    const base::FilePath& profile_path);
+ 
++// Switches the space on screen, if any, to the profile at `profile_path`, as
++// the menu bar's Profiles menu does. Returns false if no space is on screen.
++bool SwitchToSpaceOnScreen(const base::FilePath& profile_path);
++
+ // Brings `browser`'s hidden space on screen in place of the space shown now,
+ // as when the picture-in-picture window's "back to tab" asks for a tab in
+ // another space. Returns false if there is no other space on screen.
