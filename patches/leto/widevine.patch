@@ -1,0 +1,37 @@
+--- a/chrome/browser/component_updater/chrome_component_updater_configurator.cc
++++ b/chrome/browser/component_updater/chrome_component_updater_configurator.cc
+@@ -62,7 +62,7 @@
+ namespace component_updater {
+ namespace {
+ 
+-PrefService* GetProfilePrefs() {
++[[maybe_unused]] PrefService* GetProfilePrefs() {
+   // Browser process and profile manager are usually
+   // not null, but they may be during tests.
+   if (!g_browser_process) {
+@@ -184,12 +184,25 @@ base::TimeDelta ChromeConfigurator::Upda
+ 
+ std::vector<GURL> ChromeConfigurator::UpdateUrl() const {
+   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++#if BUILDFLAG(IS_MAC)
++  // Leto: components come straight from Google's update service, because
++  // Helium's doesn't offer Widevine, which sites like Spotify need to play
++  // protected media. Only Widevine and the certificate revocation list are
++  // ever registered, so nothing else is fetched.
++  return {GURL("https://update.googleapis.com/service/update2/json")};
++#else
+   return {helium::GetComponentUpdateURL(GetProfilePrefs())};
++#endif
+ }
+ 
+ std::vector<GURL> ChromeConfigurator::PingUrl() const {
+   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++#if BUILDFLAG(IS_MAC)
++  // Leto: no usage pings.
++  return {};
++#else
+   return {helium::GetComponentUpdateURL(GetProfilePrefs())};
++#endif
+ }
+ 
+ std::string ChromeConfigurator::GetProdId() const {
