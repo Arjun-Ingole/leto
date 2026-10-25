@@ -1,0 +1,259 @@
+--- a/chrome/browser/ui/views/leto/command_bar_view.cc
++++ b/chrome/browser/ui/views/leto/command_bar_view.cc
+@@ -105,6 +105,8 @@ constexpr int kRowPadding = 8;
+ constexpr int kRowCornerRadius = 8;
+ constexpr int kRowIconSize = 16;
+ constexpr size_t kMaxResults = 8;
++// Searches listed after the pages, when there are pages to list.
++constexpr size_t kMaxSearchRows = 3;
+ 
+ // TODO(leto): Localize.
+ constexpr char16_t kPlaceholder[] = u"Search or Enter URL...";
+@@ -214,14 +216,28 @@ class CommandBarResultView : public view
+     icon_->SetImage(ui::ImageModel::FromVectorIcon(
+         match.GetVectorIcon(/*is_bookmark=*/false), kColorOmniboxResultsIcon,
+         kRowIconSize));
++    has_page_favicon_ = false;
+     if (!AutocompleteMatch::IsSearchType(match.type) &&
+         match.destination_url.is_valid()) {
+       gfx::Image favicon = favicon_cache.GetFaviconForPageUrl(
+           match.destination_url,
+           base::BindOnce(&CommandBarResultView::SetFavicon,
+-                         weak_factory_.GetWeakPtr()));
++                         weak_factory_.GetWeakPtr(), /*for_page=*/true));
+       if (!favicon.IsEmpty()) {
+-        SetFavicon(favicon);
++        SetFavicon(/*for_page=*/true, favicon);
++        return;
++      }
++      // Pages without an icon of their own, like ones imported from another
++      // browser, show their site's icon rather than a globe.
++      const GURL site = match.destination_url.GetWithEmptyPath();
++      if (site != match.destination_url) {
++        favicon = favicon_cache.GetFaviconForPageUrl(
++            site, base::BindOnce(&CommandBarResultView::SetFavicon,
++                                 weak_factory_.GetWeakPtr(),
++                                 /*for_page=*/false));
++        if (!favicon.IsEmpty()) {
++          SetFavicon(/*for_page=*/false, favicon);
++        }
+       }
+     }
+   }
+@@ -243,13 +259,19 @@ class CommandBarResultView : public view
+   }
+ 
+  private:
+-  void SetFavicon(const gfx::Image& favicon) {
++  void SetFavicon(bool for_page, const gfx::Image& favicon) {
++    // The page's own icon wins over its site's, whichever arrives first.
++    if (!for_page && has_page_favicon_) {
++      return;
++    }
++    has_page_favicon_ = has_page_favicon_ || for_page;
+     icon_->SetImage(ui::ImageModel::FromImage(favicon));
+   }
+ 
+   raw_ptr<CommandBarView> command_bar_;
+   const size_t index_;
+   bool selected_ = false;
++  bool has_page_favicon_ = false;
+   raw_ptr<views::ImageView> icon_ = nullptr;
+   raw_ptr<views::Label> title_ = nullptr;
+   raw_ptr<views::Label> detail_ = nullptr;
+@@ -482,10 +504,11 @@ CommandBarView::CommandBarView(BrowserVi
+   input_layout->set_cross_axis_alignment(
+       views::BoxLayout::CrossAxisAlignment::kCenter);
+   input_layout->set_minimum_cross_axis_size(kInputHeight);
+-  input_row->AddChildView(
++  input_icon_ = input_row->AddChildView(
+       std::make_unique<views::ImageView>(ui::ImageModel::FromVectorIcon(
+           vector_icons::kSearchIcon, kColorOmniboxResultsIcon,
+           kInputIconSize)));
++  input_icon_->SetImageSize(gfx::Size(kInputIconSize, kInputIconSize));
+ 
+   textfield_ = input_row->AddChildView(std::make_unique<views::Textfield>());
+   textfield_->set_controller(this);
+@@ -569,8 +592,8 @@ void CommandBarView::SelectResult(size_t
+ 
+ void CommandBarView::OpenResult(size_t index, bool in_split) {
+   const AutocompleteResult& result = autocomplete_controller_->result();
+-  if (index < result.size()) {
+-    OpenMatch(result.match_at(index), in_split);
++  if (index < row_matches_.size() && row_matches_[index] < result.size()) {
++    OpenMatch(result.match_at(row_matches_[index]), in_split);
+   }
+ }
+ 
+@@ -602,6 +625,7 @@ void CommandBarView::ContentsChanged(vie
+   // completion straight back.
+   const bool deleting = new_contents.size() <= user_text_.size();
+   user_text_ = new_contents;
++  inline_completion_.clear();
+   StartQuery(/*prevent_inline_autocomplete=*/deleting);
+ }
+ 
+@@ -651,15 +675,22 @@ bool CommandBarView::HandleKeyEvent(view
+ 
+ void CommandBarView::OnResultChanged(AutocompleteController* controller,
+                                      bool default_match_changed) {
++  // The field shows what was typed and, selected so typing replaces it, the
++  // top result's completion. Results arrive in waves and the top one can
++  // change, so keep the completion in step and Enter opens what's shown.
+   const AutocompleteMatch* default_match = controller->result().default_match();
+-  if (default_match && !default_match->inline_autocompletion.empty() &&
+-      !controller->input().prevent_inline_autocomplete() &&
+-      controller->input().text() == user_text_ &&
+-      textfield_->GetText() == user_text_) {
+-    // Complete the address inline, selected so typing replaces it.
+-    textfield_->SetText(user_text_ + default_match->inline_autocompletion);
+-    textfield_->SetSelectedRange(
+-        gfx::Range(user_text_.size(), textfield_->GetText().size()));
++  if (controller->input().text() == user_text_ &&
++      textfield_->GetText() == user_text_ + inline_completion_) {
++    std::u16string completion;
++    if (default_match && !controller->input().prevent_inline_autocomplete()) {
++      completion = default_match->inline_autocompletion;
++    }
++    if (completion != inline_completion_) {
++      inline_completion_ = completion;
++      textfield_->SetText(user_text_ + completion);
++      textfield_->SetSelectedRange(
++          gfx::Range(user_text_.size(), textfield_->GetText().size()));
++    }
+   }
+   UpdateResults();
+ }
+@@ -682,8 +713,30 @@ void CommandBarView::StartQuery(bool pre
+ 
+ void CommandBarView::UpdateResults() {
+   const AutocompleteResult& result = autocomplete_controller_->result();
+-  const size_t count =
+-      user_text_.empty() ? 0 : std::min(result.size(), kMaxResults);
++
++  // As in Arc, the top result leads, then pages from tabs, history and
++  // bookmarks, then a few searches, rather than a wall of suggestions.
++  row_matches_.clear();
++  if (!user_text_.empty() && !result.empty()) {
++    row_matches_.push_back(0);
++    std::vector<size_t> searches;
++    for (size_t i = 1; i < result.size(); ++i) {
++      if (AutocompleteMatch::IsSearchType(result.match_at(i).type)) {
++        searches.push_back(i);
++      } else {
++        row_matches_.push_back(i);
++      }
++    }
++    const size_t max_searches =
++        row_matches_.size() == 1 ? kMaxResults : kMaxSearchRows;
++    for (size_t i = 0; i < searches.size() && i < max_searches; ++i) {
++      row_matches_.push_back(searches[i]);
++    }
++    if (row_matches_.size() > kMaxResults) {
++      row_matches_.resize(kMaxResults);
++    }
++  }
++  const size_t count = row_matches_.size();
+ 
+   if (result_views_.size() != count) {
+     results_->RemoveAllChildViews();
+@@ -694,9 +747,11 @@ void CommandBarView::UpdateResults() {
+     }
+   }
+   for (size_t i = 0; i < count; ++i) {
+-    result_views_[i]->SetMatch(result.match_at(i), favicon_cache_);
++    result_views_[i]->SetMatch(result.match_at(row_matches_[i]),
++                               favicon_cache_);
+     result_views_[i]->SetSelected(false);
+   }
++  UpdateInputIcon(count > 0 ? &result.match_at(row_matches_[0]) : nullptr);
+   selected_index_.reset();
+   if (count > 0) {
+     // The first result is what Enter opens.
+@@ -713,6 +768,38 @@ void CommandBarView::UpdateResults() {
+   }
+ }
+ 
++void CommandBarView::UpdateInputIcon(const AutocompleteMatch* top_match) {
++  // The field takes the top result's site icon when it leads to a page, and
++  // the search icon otherwise.
++  GURL url;
++  if (top_match && !AutocompleteMatch::IsSearchType(top_match->type) &&
++      top_match->destination_url.is_valid()) {
++    url = top_match->destination_url.GetWithEmptyPath();
++  }
++  if (url == input_icon_url_) {
++    return;
++  }
++  input_icon_url_ = url;
++  input_icon_->SetImage(ui::ImageModel::FromVectorIcon(
++      vector_icons::kSearchIcon, kColorOmniboxResultsIcon, kInputIconSize));
++  if (url.is_empty()) {
++    return;
++  }
++  gfx::Image favicon = favicon_cache_.GetFaviconForPageUrl(
++      url,
++      base::BindOnce(
++          [](base::WeakPtr<CommandBarView> view, const GURL& url,
++             const gfx::Image& image) {
++            if (view && view->input_icon_url_ == url) {
++              view->input_icon_->SetImage(ui::ImageModel::FromImage(image));
++            }
++          },
++          weak_factory_.GetWeakPtr(), url));
++  if (!favicon.IsEmpty()) {
++    input_icon_->SetImage(ui::ImageModel::FromImage(favicon));
++  }
++}
++
+ void CommandBarView::OpenMatch(const AutocompleteMatch& match, bool in_split) {
+   BrowserWindowInterface* browser = browser_view_->browser();
+   opened_ = true;
+--- a/chrome/browser/ui/views/leto/command_bar_view.h
++++ b/chrome/browser/ui/views/leto/command_bar_view.h
+@@ -19,6 +19,7 @@
+ #include "ui/base/metadata/metadata_header_macros.h"
+ #include "ui/views/controls/textfield/textfield_controller.h"
+ #include "ui/views/view.h"
++#include "url/gurl.h"
+ 
+ class BrowserView;
+ struct AutocompleteMatch;
+@@ -28,6 +29,7 @@ class TabInterface;
+ }  // namespace tabs
+ 
+ namespace views {
++class ImageView;
+ class Textfield;
+ }  // namespace views
+ 
+@@ -88,6 +90,8 @@ class CommandBarView : public views::Vie
+   // Puts the open tab `match` points to into the split in place of the active
+   // pane. Returns false if there is no such tab to move.
+   bool MoveTabIntoSplit(const AutocompleteMatch& match);
++  // Shows the site icon of `top_match`, if it leads to a page, in the field.
++  void UpdateInputIcon(const AutocompleteMatch* top_match);
+ 
+   raw_ptr<BrowserView> browser_view_;
+   base::RepeatingClosure dismiss_;
+@@ -100,11 +104,20 @@ class CommandBarView : public views::Vie
+   FaviconCache favicon_cache_;
+   // What the user typed, without inline autocompletion.
+   std::u16string user_text_;
++  // The completion shown after what the user typed, if any.
++  std::u16string inline_completion_;
+   std::optional<size_t> selected_index_;
++  // The result each row shows, by its index in the autocomplete results.
++  std::vector<size_t> row_matches_;
++  // The site whose icon the field shows, if any.
++  GURL input_icon_url_;
+ 
++  raw_ptr<views::ImageView> input_icon_ = nullptr;
+   raw_ptr<views::Textfield> textfield_ = nullptr;
+   raw_ptr<views::View> results_ = nullptr;
+   std::vector<raw_ptr<CommandBarResultView>> result_views_;
++
++  base::WeakPtrFactory<CommandBarView> weak_factory_{this};
+ };
+ 
+ }  // namespace leto
