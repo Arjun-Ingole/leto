@@ -1,0 +1,15 @@
+// Copyright 2026 The Leto Authors
+// You can use, redistribute, and/or modify this source code under
+// the terms of the GPL-3.0 license that can be found in the LICENSE file.
+
+CANVAS_DIMENSIONS, 256,
+NEW_PATH,
+PATH_COLOR_ARGB, 0xFF, 0x2B, 0x2B, 0x31,
+ROUND_RECT, 0, 0, 256, 256, 67,
+NEW_PATH,
+FILL_RULE_NONZERO,
+PATH_COLOR_ARGB, 0xFF, 0xFB, 0xFB, 0xFD,
+MOVE_TO, 123.12f, 64.83f,
+ARC_TO, 63.36f, 63.36f, 0, 1, 0, 188.8f, 145.83f,
+ARC_TO, 52.22f, 52.22f, 0, 1, 1, 123.12f, 64.83f,
+CLOSE
