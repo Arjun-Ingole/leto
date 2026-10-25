@@ -291,7 +291,27 @@
  #include "chrome/browser/media/media_engagement_service.h"
  #include "chrome/browser/picture_in_picture/picture_in_picture_occlusion_tracker.h"
  #include "chrome/browser/picture_in_picture/picture_in_picture_window_manager.h"
-@@ -821,11 +822,9 @@ void VideoOverlayWindowViews::UpdateCont
+@@ -116,6 +117,10 @@ constexpr gfx::Size kOverlayViewPadding(
+ // Size for action buttons.
+ constexpr gfx::Size kActionButtonSize(28, 28);
+ 
++#if BUILDFLAG(IS_MAC)
++constexpr float kLetoPipCornerRadius = 12.0f;
++#endif
++
+ // The amount of time the seek buttons next to the play button seek.
+ constexpr base::TimeDelta kSeekTime = base::Seconds(10);
+ 
+@@ -358,6 +363,8 @@ std::unique_ptr<VideoOverlayWindowViews>
+   // though we're using `views::Widget::InitParams::remove_standard_frame`.
+   params.native_widget =
+       new VideoOverlayWindowNativeWidgetMac(overlay_window.get());
++  // Leto: round the player's corners, video included.
++  params.rounded_corners = gfx::RoundedCornersF(kLetoPipCornerRadius);
+ #endif  // BUILDFLAG(IS_MAC)
+ 
+ #if BUILDFLAG(IS_CHROMEOS)
+@@ -821,11 +828,9 @@ void VideoOverlayWindowViews::UpdateCont
    //   * We are in the initial "show" period, or
    //   * The overlay window does not meet the user interaction criteria and is
    //   not trusted for media playback
@@ -306,7 +326,7 @@
  
    if (should_animate) {
      // Animate the title and top scrim.
-@@ -1167,9 +1166,7 @@ void VideoOverlayWindowViews::SetUpViews
+@@ -1167,9 +1172,7 @@ void VideoOverlayWindowViews::SetUpViews
                  }
                },
                base::Unretained(this)),
@@ -317,7 +337,7 @@
            l10n_util::GetStringUTF16(
                IDS_PICTURE_IN_PICTURE_PREVIOUS_TRACK_CONTROL_ACCESSIBLE_TEXT));
    previous_track_controls_view->SetSize(kActionButtonSize);
-@@ -1185,8 +1182,7 @@ void VideoOverlayWindowViews::SetUpViews
+@@ -1185,8 +1188,7 @@ void VideoOverlayWindowViews::SetUpViews
                  }
                },
                base::Unretained(this)),
@@ -327,7 +347,7 @@
            l10n_util::GetStringUTF16(
                IDS_PICTURE_IN_PICTURE_NEXT_TRACK_CONTROL_ACCESSIBLE_TEXT));
    next_track_controls_view->SetSize(kActionButtonSize);
-@@ -1195,7 +1191,8 @@ void VideoOverlayWindowViews::SetUpViews
+@@ -1195,7 +1197,8 @@ void VideoOverlayWindowViews::SetUpViews
    auto progress_view =
        std::make_unique<global_media_controls::MediaProgressView>(
            /*use_squiggly_line=*/false,
