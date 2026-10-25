@@ -165,7 +165,7 @@
 +ARC_TO, 6.4f, 6.4f, 0, 0, 1, 15.3f, 14.5f
 --- a/chrome/browser/ui/views/overlay/back_to_tab_button.cc
 +++ b/chrome/browser/ui/views/overlay/back_to_tab_button.cc
-@@ -4,6 +4,7 @@
+@@ -4,20 +4,25 @@
  
  #include "chrome/browser/ui/views/overlay/back_to_tab_button.h"
  
@@ -173,8 +173,33 @@
  #include "chrome/browser/ui/color/chrome_color_id.h"
  #include "chrome/grit/generated_resources.h"
  #include "components/vector_icons/vector_icons.h"
-@@ -28,11 +29,9 @@ OverlayWindowBackToTabButton::OverlayWin
++#include "third_party/skia/include/core/SkColor.h"
+ #include "ui/base/l10n/l10n_util.h"
+ #include "ui/base/metadata/metadata_impl_macros.h"
+ #include "ui/base/models/image_model.h"
+ #include "ui/base/ui_base_features.h"
+ #include "ui/views/accessibility/view_accessibility.h"
++#include "ui/views/background.h"
+ 
+ namespace {
+ 
+-constexpr int kBackToTabButtonVerticalMargin = 5;
+-constexpr int kBackToTabButtonHorizontalMargin = 28;
+-constexpr int kBackToTabButtonSize = 24;
++// Leto: top left, opposite the close button.
++constexpr int kBackToTabButtonVerticalMargin = 8;
++constexpr int kBackToTabButtonHorizontalMargin = 8;
++constexpr int kBackToTabButtonSize = 28;
++constexpr SkColor kLetoPipButtonBackground = SkColorSetARGB(0x66, 0, 0, 0);
+ constexpr int kBackToTabButtonIconSize = 16;
+ 
+ }  // namespace
+@@ -26,13 +31,13 @@ OverlayWindowBackToTabButton::OverlayWin
+     PressedCallback callback)
+     : OverlayWindowImageButton(std::move(callback)) {
    SetSize(gfx::Size(kBackToTabButtonSize, kBackToTabButtonSize));
++  // Leto: a dark glass circle keeps the button readable over any video.
++  SetBackground(views::CreatePillBackground(kLetoPipButtonBackground));
  
    SetImageModel(views::Button::STATE_NORMAL,
 -                ui::ImageModel::FromVectorIcon(
@@ -188,9 +213,21 @@
  
    // Accessibility.
    const std::u16string button_label(l10n_util::GetStringUTF16(
+@@ -42,9 +47,8 @@ OverlayWindowBackToTabButton::OverlayWin
+ }
+ 
+ void OverlayWindowBackToTabButton::SetPosition(const gfx::Size& size) {
+-  views::ImageButton::SetPosition(gfx::Point(
+-      size.width() - kBackToTabButtonSize - kBackToTabButtonHorizontalMargin,
+-      kBackToTabButtonVerticalMargin));
++  views::ImageButton::SetPosition(gfx::Point(kBackToTabButtonHorizontalMargin,
++                                             kBackToTabButtonVerticalMargin));
+ }
+ 
+ BEGIN_METADATA(OverlayWindowBackToTabButton)
 --- a/chrome/browser/ui/views/overlay/close_image_button.cc
 +++ b/chrome/browser/ui/views/overlay/close_image_button.cc
-@@ -4,6 +4,7 @@
+@@ -4,20 +4,24 @@
  
  #include "chrome/browser/ui/views/overlay/close_image_button.h"
  
@@ -198,9 +235,32 @@
  #include "chrome/browser/ui/color/chrome_color_id.h"
  #include "chrome/grit/generated_resources.h"
  #include "components/vector_icons/vector_icons.h"
-@@ -26,12 +27,10 @@ CloseImageButton::CloseImageButton(Press
++#include "third_party/skia/include/core/SkColor.h"
+ #include "ui/base/l10n/l10n_util.h"
+ #include "ui/base/metadata/metadata_impl_macros.h"
+ #include "ui/base/models/image_model.h"
+ #include "ui/base/ui_base_features.h"
+ #include "ui/views/accessibility/view_accessibility.h"
++#include "ui/views/background.h"
+ 
+ namespace {
+ 
+-constexpr int kCloseButtonTopMargin = 5;
+-constexpr int kCloseButtonMargin = 4;
+-constexpr int kCloseButtonSize = 24;
++constexpr int kCloseButtonTopMargin = 8;
++constexpr int kCloseButtonMargin = 8;
++constexpr int kCloseButtonSize = 28;
++constexpr SkColor kLetoPipButtonBackground = SkColorSetARGB(0x66, 0, 0, 0);
+ constexpr int kCloseButtonIconSize = 16;
+ 
+ }  // namespace
+@@ -25,13 +29,13 @@ constexpr int kCloseButtonIconSize = 16;
+ CloseImageButton::CloseImageButton(PressedCallback callback)
      : OverlayWindowImageButton(std::move(callback)) {
    SetSize(gfx::Size(kCloseButtonSize, kCloseButtonSize));
++  // Leto: a dark glass circle keeps the button readable over any video.
++  SetBackground(views::CreatePillBackground(kLetoPipButtonBackground));
  
 -  auto* icon = &(features::IsRoundedIconsEnabled()
 -                     ? vector_icons::kCloseIcon
@@ -357,3 +417,70 @@
            /*playing_background_color_id=*/ui::kColorSysStateDisabled,
            /*paused_foreground_color_id=*/ui::kColorSysStateDisabled,
            /*paused_background_color_id=*/ui::kColorSysStateDisabled,
+--- a/chrome/browser/ui/views/overlay/minimize_button.cc
++++ b/chrome/browser/ui/views/overlay/minimize_button.cc
+@@ -7,17 +7,21 @@
+ #include "chrome/app/vector_icons/vector_icons.h"
+ #include "chrome/browser/ui/color/chrome_color_id.h"
+ #include "chrome/grit/generated_resources.h"
++#include "third_party/skia/include/core/SkColor.h"
+ #include "ui/base/l10n/l10n_util.h"
+ #include "ui/base/metadata/metadata_impl_macros.h"
+ #include "ui/base/models/image_model.h"
+ #include "ui/base/ui_base_features.h"
+ #include "ui/views/accessibility/view_accessibility.h"
++#include "ui/views/background.h"
+ 
+ namespace {
+ 
+-constexpr int kMinimizeButtonVerticalMargin = 5;
+-constexpr int kMinimizeButtonHorizontalMargin = 52;
+-constexpr int kMinimizeButtonSize = 24;
++// Leto: next to the close button, with the same size and spacing.
++constexpr int kMinimizeButtonVerticalMargin = 8;
++constexpr int kMinimizeButtonHorizontalMargin = 8 + 28 + 6;
++constexpr int kMinimizeButtonSize = 28;
++constexpr SkColor kLetoPipButtonBackground = SkColorSetARGB(0x66, 0, 0, 0);
+ constexpr int kMinimizeButtonIconSize = 16;
+ 
+ }  // namespace
+@@ -26,6 +30,8 @@ OverlayWindowMinimizeButton::OverlayWind
+     PressedCallback callback)
+     : OverlayWindowImageButton(std::move(callback)) {
+   SetSize(gfx::Size(kMinimizeButtonSize, kMinimizeButtonSize));
++  // Leto: a dark glass circle keeps the button readable over any video.
++  SetBackground(views::CreatePillBackground(kLetoPipButtonBackground));
+ 
+   SetImageModel(views::Button::STATE_NORMAL,
+                 ui::ImageModel::FromVectorIcon(features::IsRoundedIconsEnabled()
+--- a/components/remote_cocoa/app_shim/native_widget_mac_frameless_nswindow.mm
++++ b/components/remote_cocoa/app_shim/native_widget_mac_frameless_nswindow.mm
+@@ -8,6 +8,10 @@
+ + (Class)frameViewClassForStyleMask:(NSUInteger)windowStyle;
+ @end
+ 
++@interface NSThemeFrame (PrivateFramelessAPI)
++- (CGFloat)_getCachedWindowCornerRadius;
++@end
++
+ @interface NativeWidgetMacFramelessNSWindowFrame
+     : NativeWidgetMacNSWindowTitledFrame
+ @end
+@@ -16,6 +20,17 @@
+ - (CGFloat)_titlebarHeight {
+   return 0;
+ }
++
++// Leto: when the content view has rounded corners (see
++// views::Widget::InitParams::rounded_corners), round the window to match so
++// its frame and shadow follow the same shape instead of a square outline.
++- (CGFloat)_getCachedWindowCornerRadius {
++  const CGFloat content_radius = self.window.contentView.layer.cornerRadius;
++  if (content_radius > 0) {
++    return content_radius;
++  }
++  return [super _getCachedWindowCornerRadius];
++}
+ @end
+ 
+ @implementation NativeWidgetMacFramelessNSWindow
