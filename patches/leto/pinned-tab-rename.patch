@@ -1,0 +1,499 @@
+--- a/chrome/browser/sessions/session_service_base.cc
++++ b/chrome/browser/sessions/session_service_base.cc
+@@ -19,6 +19,11 @@
+ #include "base/strings/to_string.h"
+ #include "base/task/sequenced_task_runner.h"
+ #include "build/build_config.h"
++
++#if BUILDFLAG(IS_MAC)
++#include "base/strings/utf_string_conversions.h"
++#include "chrome/browser/ui/views/leto/tab_rename.h"
++#endif
+ #include "chrome/browser/apps/app_service/web_contents_app_id_utils.h"
+ #include "chrome/browser/browser_process.h"
+ #include "chrome/browser/profiles/profile.h"
+@@ -672,6 +677,15 @@ void SessionServiceBase::BuildCommandsFo
+         sessions::CreatePinnedStateCommand(session_id, true));
+   }
+ 
++#if BUILDFLAG(IS_MAC)
++  // Leto: keep a tab's own name when the session is written afresh.
++  if (std::optional<std::u16string> title = leto::GetCustomTabTitle(tab)) {
++    command_storage_manager()->AppendRebuildCommand(
++        sessions::CreateAddTabExtraDataCommand(
++            session_id, leto::kCustomTabTitleKey, base::UTF16ToUTF8(*title)));
++  }
++#endif
++
+   // Record the association between the sessionStorage namespace and the tab.
+   content::SessionStorageNamespaceHandle* session_storage_namespace =
+       tab->GetController().GetDefaultSessionStorageNamespace();
+--- a/chrome/browser/ui/BUILD.gn
++++ b/chrome/browser/ui/BUILD.gn
+@@ -3390,6 +3390,8 @@ static_library("ui") {
+       "views/leto/tab_archiver.h",
+       "views/leto/tab_drop.cc",
+       "views/leto/tab_drop.h",
++      "views/leto/tab_rename.cc",
++      "views/leto/tab_rename.h",
+     ]
+ 
+     deps += [
+--- a/chrome/browser/ui/browser_tabrestore.cc
++++ b/chrome/browser/ui/browser_tabrestore.cc
+@@ -10,6 +10,10 @@
+ 
+ #include "base/containers/span.h"
+ #include "build/build_config.h"
++
++#if BUILDFLAG(IS_MAC)
++#include "chrome/browser/ui/views/leto/tab_rename.h"
++#endif
+ #include "chrome/browser/apps/app_service/web_contents_app_id_utils.h"
+ #include "chrome/browser/glic/glic_tab_restore_helper.h"
+ #include "chrome/browser/profiles/profile.h"
+@@ -86,6 +90,9 @@ std::unique_ptr<WebContents> CreateResto
+   glic::RestoreGlicStateFromExtraData(web_contents.get(), extra_data);
+   send_tab_to_self::SendTabToSelfActivationTracker::RestoreFromExtraData(
+       web_contents.get(), extra_data);
++#if BUILDFLAG(IS_MAC)
++  leto::RestoreCustomTabTitle(web_contents.get(), extra_data);
++#endif
+ 
+   std::vector<std::unique_ptr<NavigationEntry>> entries =
+       ContentSerializedNavigationBuilder::ToNavigationEntries(
+--- a/chrome/browser/ui/tabs/tab_menu_model.cc
++++ b/chrome/browser/ui/tabs/tab_menu_model.cc
+@@ -14,6 +14,10 @@
+ #include "base/i18n/rtl.h"
+ #include "base/metrics/user_metrics.h"
+ #include "build/build_config.h"
++
++#if BUILDFLAG(IS_MAC)
++#include "chrome/browser/ui/views/leto/tab_rename.h"
++#endif
+ #include "chrome/app/chrome_command_ids.h"
+ #include "chrome/app/vector_icons/vector_icons.h"
+ #include "chrome/browser/glic/browser_ui/glic_vector_icon_manager.h"
+@@ -518,6 +522,12 @@ void TabMenuModel::Build(int index) {
+   AddItemWithStringId(
+       TabStripModel::CommandTogglePinned,
+       will_pin ? IDS_TAB_CXMENU_PIN_TAB : IDS_TAB_CXMENU_UNPIN_TAB);
++#if BUILDFLAG(IS_MAC)
++  // Leto: a pinned tab can be given a name of its own.
++  if (!will_pin && num_tabs == 1) {
++    AddItem(leto::kRenameTabCommandId, u"Rename Tab\u2026");
++  }
++#endif
+ 
+   if (features::IsMenuSimplificationEnabled()) {
+     SetIconForCommandId(
+--- /dev/null
++++ b/chrome/browser/ui/views/leto/tab_rename.cc
+@@ -0,0 +1,247 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/views/leto/tab_rename.h"
++
++#include <memory>
++#include <string>
++
++#include "base/functional/bind.h"
++#include "base/memory/weak_ptr.h"
++#include "base/strings/string_util.h"
++#include "base/strings/utf_string_conversions.h"
++#include "base/task/sequenced_task_runner.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/sessions/session_service.h"
++#include "chrome/browser/sessions/session_service_factory.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/color/chrome_color_id.h"
++#include "chrome/browser/ui/tabs/tab_change_type.h"
++#include "chrome/browser/ui/tabs/tab_strip_model.h"
++#include "chrome/browser/ui/views/frame/browser_view.h"
++#include "chrome/browser/ui/views/tabs/common/tab_view.h"
++#include "chrome/browser/ui/views/tabs/tab/tab_title.h"
++#include "components/sessions/content/session_tab_helper.h"
++#include "components/tabs/public/tab_interface.h"
++#include "content/public/browser/web_contents.h"
++#include "content/public/browser/web_contents_user_data.h"
++#include "ui/base/metadata/metadata_header_macros.h"
++#include "ui/base/metadata/metadata_impl_macros.h"
++#include "ui/compositor/layer.h"
++#include "ui/events/event.h"
++#include "ui/events/keycodes/keyboard_codes.h"
++#include "ui/views/background.h"
++#include "ui/views/border.h"
++#include "ui/views/controls/textfield/textfield.h"
++#include "ui/views/controls/textfield/textfield_controller.h"
++#include "ui/views/view_class_properties.h"
++#include "ui/views/view_utils.h"
++
++namespace leto {
++
++namespace {
++
++constexpr int kFieldCornerRadius = 6;
++
++// A tab's own name, set by the user.
++class CustomTabTitle : public content::WebContentsUserData<CustomTabTitle> {
++ public:
++  ~CustomTabTitle() override = default;
++
++  const std::u16string& title() const { return title_; }
++  void set_title(const std::u16string& title) { title_ = title; }
++
++ private:
++  friend class content::WebContentsUserData<CustomTabTitle>;
++  explicit CustomTabTitle(content::WebContents* contents)
++      : content::WebContentsUserData<CustomTabTitle>(*contents) {}
++
++  std::u16string title_;
++
++  WEB_CONTENTS_USER_DATA_KEY_DECL();
++};
++
++WEB_CONTENTS_USER_DATA_KEY_IMPL(CustomTabTitle);
++
++TabView* FindTabView(views::View* root, const tabs::TabInterface* tab) {
++  if (auto* tab_view = views::AsViewClass<TabView>(root);
++      tab_view && tab_view->GetTabInterface() == tab) {
++    return tab_view;
++  }
++  for (views::View* child : root->children()) {
++    if (TabView* found = FindTabView(child, tab)) {
++      return found;
++    }
++  }
++  return nullptr;
++}
++
++TabTitle* FindTitle(TabView* tab_view) {
++  for (views::View* child : tab_view->children()) {
++    if (auto* title = views::AsViewClass<TabTitle>(child)) {
++      return title;
++    }
++  }
++  return nullptr;
++}
++
++// The field that takes the place of a tab's title while it's being named.
++// Return or clicking away keeps the name, and Escape leaves it as it was.
++class RenameField : public views::Textfield, public views::TextfieldController {
++  METADATA_HEADER(RenameField, views::Textfield)
++
++ public:
++  explicit RenameField(content::WebContents* contents)
++      : contents_(contents->GetWeakPtr()) {
++    set_controller(this);
++    SetProperty(views::kViewIgnoredByLayoutKey, true);
++    // The title paints to a layer of its own; the field must sit above it.
++    SetPaintToLayer();
++    layer()->SetFillsBoundsOpaquely(false);
++    SetBorder(views::CreateEmptyBorder(gfx::Insets::VH(0, 4)));
++    SetBackground(views::CreateRoundedRectBackground(
++        kColorToolbarBackgroundSubtleEmphasis, kFieldCornerRadius));
++    SetAccessibleName(u"Tab name");
++  }
++
++  // views::TextfieldController:
++  bool HandleKeyEvent(views::Textfield* sender,
++                      const ui::KeyEvent& key_event) override {
++    if (key_event.type() != ui::EventType::kKeyPressed) {
++      return false;
++    }
++    if (key_event.key_code() == ui::VKEY_RETURN) {
++      Finish(/*keep=*/true);
++      return true;
++    }
++    if (key_event.key_code() == ui::VKEY_ESCAPE) {
++      Finish(/*keep=*/false);
++      return true;
++    }
++    return false;
++  }
++
++  // views::Textfield:
++  void OnBlur() override {
++    views::Textfield::OnBlur();
++    Finish(/*keep=*/true);
++  }
++
++ private:
++  void Finish(bool keep) {
++    if (finished_) {
++      return;
++    }
++    finished_ = true;
++    if (keep && contents_) {
++      std::u16string name(base::TrimWhitespace(GetText(), base::TRIM_ALL));
++      // A name that is just the page's title is no name at all.
++      if (name == contents_->GetTitle()) {
++        name.clear();
++      }
++      SetCustomTabTitle(contents_.get(), name);
++      // Show the new name at once rather than at the page's next change.
++      if (TabView* tab_view = views::AsViewClass<TabView>(parent())) {
++        if (TabTitle* title = FindTitle(tab_view)) {
++          title->SetText(name.empty() ? contents_->GetTitle() : name);
++        }
++      }
++    }
++    // The field goes once the event that ended it has been handled.
++    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
++        FROM_HERE, base::BindOnce(
++                       [](base::WeakPtr<views::View> field) {
++                         if (field && field->parent()) {
++                           field->parent()->RemoveChildViewT(field.get());
++                         }
++                       },
++                       weak_factory_.GetWeakPtr()));
++  }
++
++  base::WeakPtr<content::WebContents> contents_;
++  bool finished_ = false;
++  base::WeakPtrFactory<views::View> weak_factory_{this};
++};
++
++BEGIN_METADATA(RenameField)
++END_METADATA
++
++}  // namespace
++
++std::optional<std::u16string> GetCustomTabTitle(
++    const content::WebContents* contents) {
++  const CustomTabTitle* custom = CustomTabTitle::FromWebContents(
++      const_cast<content::WebContents*>(contents));
++  if (!custom || custom->title().empty()) {
++    return std::nullopt;
++  }
++  return custom->title();
++}
++
++void SetCustomTabTitle(content::WebContents* contents,
++                       const std::u16string& title) {
++  if (title.empty()) {
++    contents->RemoveUserData(CustomTabTitle::UserDataKey());
++  } else {
++    CustomTabTitle::CreateForWebContents(contents);
++    CustomTabTitle::FromWebContents(contents)->set_title(title);
++  }
++
++  Profile* profile = Profile::FromBrowserContext(contents->GetBrowserContext());
++  if (SessionService* session_service =
++          SessionServiceFactory::GetForProfile(profile)) {
++    const SessionID window_id =
++        sessions::SessionTabHelper::IdForWindowContainingTab(contents);
++    const SessionID tab_id = sessions::SessionTabHelper::IdForTab(contents);
++    if (window_id.is_valid() && tab_id.is_valid()) {
++      session_service->AddTabExtraData(window_id, tab_id, kCustomTabTitleKey,
++                                       base::UTF16ToUTF8(title));
++    }
++  }
++
++  if (tabs::TabInterface* tab =
++          tabs::TabInterface::MaybeGetFromContents(contents)) {
++    if (BrowserWindowInterface* browser = tab->GetBrowserWindowInterface()) {
++      browser->GetTabStripModel()->NotifyTabChanged(tab, TabChangeType::kAll);
++    }
++  }
++}
++
++void RestoreCustomTabTitle(
++    content::WebContents* contents,
++    const std::map<std::string, std::string>& extra_data) {
++  auto it = extra_data.find(kCustomTabTitleKey);
++  if (it == extra_data.end() || it->second.empty()) {
++    return;
++  }
++  CustomTabTitle::CreateForWebContents(contents);
++  CustomTabTitle::FromWebContents(contents)->set_title(
++      base::UTF8ToUTF16(it->second));
++}
++
++void StartRenamingTab(tabs::TabInterface* tab) {
++  BrowserWindowInterface* browser =
++      tab ? tab->GetBrowserWindowInterface() : nullptr;
++  BrowserView* browser_view =
++      browser ? BrowserView::GetBrowserViewForBrowser(browser) : nullptr;
++  TabView* tab_view = browser_view ? FindTabView(browser_view, tab) : nullptr;
++  TabTitle* title = tab_view ? FindTitle(tab_view) : nullptr;
++  if (!title) {
++    return;
++  }
++
++  auto* field =
++      tab_view->AddChildView(std::make_unique<RenameField>(tab->GetContents()));
++  field->SetFontList(title->font_list());
++  field->SetText(std::u16string(title->GetText()));
++  // Cover the title, reaching a little either side of it so the text inside
++  // the field lines up with the title's.
++  gfx::Rect bounds = title->bounds();
++  bounds.Outset(gfx::Outsets::VH(2, 4));
++  field->SetBoundsRect(bounds);
++  field->SelectAll(/*reversed=*/false);
++  field->RequestFocus();
++}
++
++}  // namespace leto
+--- /dev/null
++++ b/chrome/browser/ui/views/leto/tab_rename.h
+@@ -0,0 +1,51 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_VIEWS_LETO_TAB_RENAME_H_
++#define CHROME_BROWSER_UI_VIEWS_LETO_TAB_RENAME_H_
++
++#include <map>
++#include <optional>
++#include <string>
++
++namespace content {
++class WebContents;
++}  // namespace content
++
++namespace tabs {
++class TabInterface;
++}  // namespace tabs
++
++namespace leto {
++
++// Pinned tabs can be given names of their own, as in Arc, which the sidebar
++// shows in place of the page's title. Names are kept with the session.
++
++// The tab menu's "Rename Tab…" command. It lies beyond Chromium's own tab
++// commands.
++inline constexpr int kRenameTabCommandId = 1000;
++
++// The session's key for a tab's name.
++inline constexpr char kCustomTabTitleKey[] = "leto.custom_title";
++
++// The name given to the tab of `contents`, if any.
++std::optional<std::u16string> GetCustomTabTitle(
++    const content::WebContents* contents);
++
++// Names the tab of `contents` `title`, or forgets its name if `title` is
++// empty, and saves it with the session.
++void SetCustomTabTitle(content::WebContents* contents,
++                       const std::u16string& title);
++
++// Gives a restored tab the name it was saved with.
++void RestoreCustomTabTitle(
++    content::WebContents* contents,
++    const std::map<std::string, std::string>& extra_data);
++
++// Turns `tab`'s title in the sidebar into a field for naming it.
++void StartRenamingTab(tabs::TabInterface* tab);
++
++}  // namespace leto
++
++#endif  // CHROME_BROWSER_UI_VIEWS_LETO_TAB_RENAME_H_
+--- a/chrome/browser/ui/views/tabs/common/tab_view.cc
++++ b/chrome/browser/ui/views/tabs/common/tab_view.cc
+@@ -12,6 +12,7 @@
+ #include "base/metrics/user_metrics.h"
+ #include "base/metrics/user_metrics_action.h"
+ #include "base/time/time.h"
++#include "build/build_config.h"
+ #include "chrome/browser/dictation/dictation_keyed_service.h"
+ #include "chrome/browser/glic/browser_ui/tab_underline_controller.h"
+ #include "chrome/browser/glic/browser_ui/tab_underline_view.h"
+@@ -54,6 +55,10 @@
+ #include "chrome/browser/ui/views/tabs/tab/tab_close_button.h"
+ #include "chrome/browser/ui/views/tabs/tab/tab_icon.h"
+ #include "chrome/browser/ui/views/tabs/tab/tab_title.h"
++
++#if BUILDFLAG(IS_MAC)
++#include "chrome/browser/ui/views/leto/tab_rename.h"
++#endif
+ #include "chrome/browser/ui/views/tabs/tab_style_views.h"
+ #include "chrome/browser/ui/window_metadata/window_metadata_controller.h"
+ #include "chrome/common/buildflags.h"
+@@ -1210,6 +1215,16 @@ void TabView::SetDataForTesting(const ta
+ 
+ void TabView::UpdateTitle(std::u16string title,
+                           bool should_render_loading_title) {
++#if BUILDFLAG(IS_MAC)
++  // Leto: a tab with a name of its own always shows it.
++  if (const tabs::TabInterface* tab = GetTabInterface()) {
++    if (std::optional<std::u16string> custom =
++            leto::GetCustomTabTitle(tab->GetContents())) {
++      title_->SetText(*custom);
++      return;
++    }
++  }
++#endif
+   if (should_render_loading_title) {
+     title = icon_->GetShowingLoadingAnimation()
+                 ? l10n_util::GetStringUTF16(IDS_TAB_LOADING_TITLE)
+--- a/chrome/browser/ui/views/tabs/tab/tab_context_menu_controller.cc
++++ b/chrome/browser/ui/views/tabs/tab/tab_context_menu_controller.cc
+@@ -4,12 +4,17 @@
+ 
+ #include "chrome/browser/ui/views/tabs/tab/tab_context_menu_controller.h"
+ 
++#include "build/build_config.h"
+ #include "chrome/browser/ui/tabs/tab_menu_model.h"
+ #include "chrome/browser/ui/tabs/tab_strip_model.h"
+ #include "extensions/buildflags/buildflags.h"
+ #include "ui/gfx/geometry/rect.h"
+ #include "ui/views/controls/menu/menu_runner.h"
+ 
++#if BUILDFLAG(IS_MAC)
++#include "chrome/browser/ui/views/leto/tab_rename.h"
++#endif
++
+ #if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
+ #include "chrome/browser/extensions/context_menu_matcher.h"
+ #include "content/public/browser/context_menu_params.h"
+@@ -53,6 +58,11 @@ void TabContextMenuController::CloseMenu
+ }
+ 
+ bool TabContextMenuController::IsCommandIdChecked(int command_id) const {
++#if BUILDFLAG(IS_MAC)
++  if (command_id == leto::kRenameTabCommandId) {
++    return false;
++  }
++#endif
+ #if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
+   if (extensions::ContextMenuMatcher::IsExtensionsCustomCommandId(command_id)) {
+     if (tab_menu_model_ && tab_menu_model_->extension_items()) {
+@@ -66,6 +76,11 @@ bool TabContextMenuController::IsCommand
+ }
+ 
+ bool TabContextMenuController::IsCommandIdEnabled(int command_id) const {
++#if BUILDFLAG(IS_MAC)
++  if (command_id == leto::kRenameTabCommandId) {
++    return true;
++  }
++#endif
+ #if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
+   if (extensions::ContextMenuMatcher::IsExtensionsCustomCommandId(command_id)) {
+     if (tab_menu_model_ && tab_menu_model_->extension_items()) {
+@@ -94,11 +109,22 @@ bool TabContextMenuController::IsCommand
+ }
+ 
+ bool TabContextMenuController::IsCommandIdAlerted(int command_id) const {
++#if BUILDFLAG(IS_MAC)
++  if (command_id == leto::kRenameTabCommandId) {
++    return false;
++  }
++#endif
+   return delegate_->IsContextMenuCommandAlerted(
+       static_cast<TabStripModel::ContextMenuCommand>(command_id));
+ }
+ 
+ void TabContextMenuController::ExecuteCommand(int command_id, int event_flags) {
++#if BUILDFLAG(IS_MAC)
++  if (command_id == leto::kRenameTabCommandId) {
++    leto::StartRenamingTab(tab_handle_.Get());
++    return;
++  }
++#endif
+ #if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
+   if (extensions::ContextMenuMatcher::IsExtensionsCustomCommandId(command_id)) {
+     if (tab_menu_model_ && tab_menu_model_->extension_items()) {
