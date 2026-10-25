@@ -3,278 +3,411 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Leto Logo Concepts</title>
+<title>Leto Logo Explorer</title>
 <style>
   :root {
-    --bg: #f4f2ef;
+    --bg: #f3f1ee;
     --surface: #ffffff;
-    --surface-2: #ece9e4;
+    --surface-2: #ebe8e3;
     --text: #1b1a19;
     --muted: #6d6a66;
     --line: rgba(0, 0, 0, 0.08);
     --accent: #6b5cff;
-    --shadow: 0 1px 2px rgba(0,0,0,.06), 0 8px 24px rgba(0,0,0,.06);
-    --dock: rgba(255, 255, 255, 0.55);
+    --shadow: 0 1px 2px rgba(0,0,0,.05), 0 6px 18px rgba(0,0,0,.06);
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --bg: #121214;
-      --surface: #1b1b1e;
+      --bg: #111113;
+      --surface: #1a1a1d;
       --surface-2: #232327;
       --text: #f2f1ef;
       --muted: #9b9893;
       --line: rgba(255, 255, 255, 0.08);
       --accent: #9a8cff;
-      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
-      --dock: rgba(40, 40, 44, 0.6);
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 6px 18px rgba(0,0,0,.3);
     }
   }
   :root[data-theme="dark"] {
-    --bg: #121214;
-    --surface: #1b1b1e;
+    --bg: #111113;
+    --surface: #1a1a1d;
     --surface-2: #232327;
     --text: #f2f1ef;
     --muted: #9b9893;
     --line: rgba(255, 255, 255, 0.08);
     --accent: #9a8cff;
-    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
-    --dock: rgba(40, 40, 44, 0.6);
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 6px 18px rgba(0,0,0,.3);
   }
-
   * { box-sizing: border-box; }
   html, body { margin: 0; }
   body {
-    background: var(--bg);
-    color: var(--text);
-    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;
+    background: var(--bg); color: var(--text);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
   }
-  .wrap { max-width: 1180px; margin: 0 auto; padding: 48px 24px 96px; }
+  .wrap { max-width: 1320px; margin: 0 auto; padding: 40px 24px 96px; }
+  h1 { font: 600 32px/1.1 ui-serif, "New York", Georgia, serif; margin: 0 0 8px; letter-spacing: -0.01em; }
+  .lede { color: var(--muted); margin: 0 0 24px; max-width: 720px; }
 
-  header { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
-  h1 { font: 600 34px/1.1 ui-serif, "New York", Georgia, serif; letter-spacing: -0.01em; margin: 0 0 8px; }
-  .lede { color: var(--muted); margin: 0; max-width: 620px; }
-  .controls { display: flex; gap: 8px; }
+  .toolbar {
+    position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(16px); padding: 12px 0; margin: 0 0 8px; border-bottom: 1px solid var(--line);
+    display: flex; flex-wrap: wrap; gap: 14px 22px; align-items: center;
+  }
+  .group { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .group > span { color: var(--muted); font-size: 12px; margin-right: 4px; text-transform: uppercase; letter-spacing: .06em; }
   button.chip {
-    appearance: none; border: 1px solid var(--line); background: var(--surface);
-    color: var(--text); font: 500 13px/1 inherit; padding: 9px 14px; border-radius: 999px;
-    cursor: pointer; box-shadow: var(--shadow);
+    appearance: none; border: 1px solid var(--line); background: var(--surface); color: var(--text);
+    font: 500 13px/1 inherit; padding: 8px 12px; border-radius: 999px; cursor: pointer;
   }
-  button.chip[aria-pressed="true"] { background: var(--text); color: var(--bg); }
+  button.chip[aria-pressed="true"] { background: var(--text); color: var(--bg); border-color: transparent; }
 
-  .grid {
-    margin-top: 36px;
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-    gap: 20px;
+  section.mark { margin-top: 28px; }
+  section.mark h2 { font: 600 18px/1.2 inherit; margin: 0 0 4px; }
+  section.mark p { color: var(--muted); margin: 0 0 14px; font-size: 13px; max-width: 760px; }
+  .row { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 10px; }
+  .tile {
+    position: relative; background: var(--surface); border: 1px solid var(--line); border-radius: 16px;
+    padding: 10px 6px 8px; display: grid; justify-items: center; gap: 4px; cursor: pointer;
+    box-shadow: var(--shadow); transition: transform .12s ease;
   }
-  .card {
-    background: var(--surface); border: 1px solid var(--line); border-radius: 20px;
-    padding: 22px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 18px;
-    position: relative;
-  }
-  .card.favorite { outline: 2px solid var(--accent); outline-offset: -1px; }
-  .card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
-  .card h2 { margin: 0; font: 600 18px/1.2 inherit; }
-  .card .num { color: var(--muted); font: 500 12px/1 ui-monospace, "SF Mono", monospace; }
-  .hero {
-    display: grid; place-items: center; padding: 18px 0 8px;
-    background: radial-gradient(closest-side, var(--surface-2), transparent);
-    border-radius: 14px;
-  }
-  .hero svg { width: 200px; height: 200px; filter: drop-shadow(0 12px 22px rgba(0,0,0,.22)); }
-  .sizes { display: flex; align-items: flex-end; gap: 18px; justify-content: center; }
-  .sizes figure { margin: 0; display: grid; justify-items: center; gap: 6px; }
-  .sizes figcaption { font: 500 11px/1 ui-monospace, "SF Mono", monospace; color: var(--muted); }
-  .lockup { display: flex; align-items: center; gap: 12px; justify-content: center; padding: 6px 0; }
-  .lockup svg { width: 40px; height: 40px; }
-  .lockup span { font-size: 30px; letter-spacing: -0.02em; }
-  .desc { color: var(--muted); margin: 0; font-size: 14px; }
-  .palette { display: flex; gap: 6px; }
-  .palette i { width: 22px; height: 22px; border-radius: 6px; border: 1px solid var(--line); display: block; }
-  .fav {
-    position: absolute; top: 16px; right: 16px;
-  }
-  .fav button {
-    appearance: none; border: 1px solid var(--line); background: var(--surface-2); color: var(--muted);
-    width: 34px; height: 34px; border-radius: 50%; cursor: pointer; font-size: 16px; line-height: 1;
-  }
-  .card.favorite .fav button { background: var(--accent); color: #fff; border-color: transparent; }
-  .card-head { padding-right: 44px; }
+  .tile:hover { transform: translateY(-2px); }
+  .tile.favorite { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .tile svg { width: 100%; max-width: 116px; height: auto; aspect-ratio: 1; }
+  .tile .name { font-size: 11px; color: var(--muted); }
+  .tile .star { position: absolute; top: 6px; right: 8px; font-size: 12px; color: var(--accent); display: none; }
+  .tile.favorite .star { display: block; }
 
-  section.preview { margin-top: 56px; }
-  section.preview h3 { font: 600 20px/1.2 ui-serif, "New York", Georgia, serif; margin: 0 0 6px; }
-  section.preview p { color: var(--muted); margin: 0 0 20px; }
-  .desktop {
-    border-radius: 18px; overflow: hidden; border: 1px solid var(--line);
-    background:
-      radial-gradient(1200px 500px at 20% 0%, #c9b7ff 0%, transparent 60%),
-      radial-gradient(900px 500px at 90% 100%, #ffc9a8 0%, transparent 55%),
-      linear-gradient(160deg, #5b5ea6, #2d2f55);
-    padding: 0 0 28px; min-height: 280px; display: flex; flex-direction: column; justify-content: space-between;
+  /* Detail drawer */
+  .scrim { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; z-index: 20; }
+  .scrim.open { display: block; }
+  .drawer {
+    position: fixed; top: 0; right: 0; bottom: 0; width: min(460px, 100%); background: var(--surface);
+    z-index: 21; transform: translateX(100%); transition: transform .2s ease; overflow: auto;
+    padding: 24px; border-left: 1px solid var(--line); display: flex; flex-direction: column; gap: 20px;
   }
-  .menubar {
-    height: 30px; display: flex; align-items: center; gap: 18px; padding: 0 14px;
-    background: rgba(255,255,255,.28); color: #111; font: 600 13px/1 -apple-system, system-ui, sans-serif;
-    backdrop-filter: blur(20px);
+  .drawer.open { transform: none; }
+  .drawer header { display: flex; justify-content: space-between; align-items: start; gap: 12px; }
+  .drawer h3 { margin: 0; font: 600 20px/1.2 inherit; }
+  .drawer .sub { color: var(--muted); font-size: 13px; }
+  .drawer .big { display: grid; place-items: center; background: var(--surface-2); border-radius: 18px; padding: 18px; }
+  .drawer .big svg { width: 100%; max-width: 300px; height: auto; }
+  .drawer .sizes { display: flex; gap: 16px; align-items: flex-end; justify-content: center; }
+  .drawer .sizes figure { margin: 0; display: grid; justify-items: center; gap: 4px; }
+  .drawer .sizes figcaption { font: 500 11px/1 ui-monospace, "SF Mono", monospace; color: var(--muted); }
+  .drawer .lockup { display: flex; align-items: center; justify-content: center; gap: 12px; }
+  .drawer .lockup span { font: 600 30px/1 -apple-system, "SF Pro Display", system-ui, sans-serif; letter-spacing: -0.02em; }
+  .dockprev {
+    border-radius: 16px; padding: 26px 12px 14px; display: flex; justify-content: center;
+    background: radial-gradient(600px 300px at 20% 0%, #c9b7ff, transparent 60%),
+                radial-gradient(500px 300px at 90% 100%, #ffc9a8, transparent 55%),
+                linear-gradient(160deg, #5b5ea6, #2d2f55);
   }
-  .menubar .tray { margin-left: auto; display: flex; gap: 12px; align-items: center; }
-  .menubar .tray svg { width: 16px; height: 16px; }
-  .dock {
-    align-self: center; display: flex; gap: 10px; padding: 9px 12px; border-radius: 22px;
-    background: var(--dock); backdrop-filter: blur(24px); border: 1px solid rgba(255,255,255,.25);
-    flex-wrap: wrap; justify-content: center; margin: 0 16px;
+  .dockprev .dock {
+    display: flex; gap: 8px; padding: 8px 10px; border-radius: 20px; background: rgba(40,40,44,.5);
+    backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,.2);
   }
-  .dock svg { width: 60px; height: 60px; transition: transform .15s ease; }
-  .dock svg:hover { transform: translateY(-8px) scale(1.12); }
+  .dockprev .dock svg, .dockprev .dock .app { width: 52px; height: 52px; }
+  .dockprev .app { border-radius: 12px; }
+  .close { appearance: none; border: 1px solid var(--line); background: var(--surface-2); color: var(--text);
+    width: 32px; height: 32px; border-radius: 50%; cursor: pointer; font-size: 16px; }
+  .fav-btn { align-self: flex-start; }
 
   @media (max-width: 520px) {
-    .wrap { padding: 32px 16px 72px; }
-    .hero svg { width: 160px; height: 160px; }
-    .sizes { gap: 12px; }
-    .dock svg { width: 44px; height: 44px; }
+    .wrap { padding: 28px 16px 72px; }
+    .row { grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); }
   }
 </style>
 </head>
 <body>
-<!--
-  Leto logo concepts. Each concept is an SVG symbol on a 100x100 grid, drawn as
-  a macOS app icon (continuous-corner squircle) and reused at every size below.
--->
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <defs>
-    <!-- macOS icon grid: an 824-unit continuous-corner body inset in a 1024
-         canvas, with a soft shadow, a fine rim of light and an off-white mark. -->
+    <!-- macOS icon grid: an 824-unit continuous-corner body inset in a 1024 canvas. -->
     <path id="sq" d="M1024.0 512.0 L1023.9 631.2 L1023.7 669.3 L1023.4 697.0 L1022.9 719.5 L1022.2 738.8 L1021.5 755.8 L1020.6 771.1 L1019.5 785.2 L1018.3 798.1 L1016.9 810.2 L1015.5 821.5 L1013.8 832.1 L1012.0 842.1 L1010.1 851.6 L1008.0 860.7 L1005.8 869.3 L1003.4 877.5 L1000.9 885.3 L998.2 892.8 L995.4 900.0 L992.4 906.9 L989.2 913.5 L985.9 919.9 L982.4 926.0 L978.7 931.8 L974.9 937.4 L970.9 942.8 L966.7 948.0 L962.3 953.0 L957.7 957.7 L953.0 962.3 L948.0 966.7 L942.8 970.9 L937.4 974.9 L931.8 978.7 L926.0 982.4 L919.9 985.9 L913.5 989.2 L906.9 992.4 L900.0 995.4 L892.8 998.2 L885.3 1000.9 L877.5 1003.4 L869.3 1005.8 L860.7 1008.0 L851.6 1010.1 L842.1 1012.0 L832.1 1013.8 L821.5 1015.5 L810.2 1016.9 L798.1 1018.3 L785.2 1019.5 L771.1 1020.6 L755.8 1021.5 L738.8 1022.2 L719.5 1022.9 L697.0 1023.4 L669.3 1023.7 L631.2 1023.9 L512.0 1024.0 L392.8 1023.9 L354.7 1023.7 L327.0 1023.4 L304.5 1022.9 L285.2 1022.2 L268.2 1021.5 L252.9 1020.6 L238.8 1019.5 L225.9 1018.3 L213.8 1016.9 L202.5 1015.5 L191.9 1013.8 L181.9 1012.0 L172.4 1010.1 L163.3 1008.0 L154.7 1005.8 L146.5 1003.4 L138.7 1000.9 L131.2 998.2 L124.0 995.4 L117.1 992.4 L110.5 989.2 L104.1 985.9 L98.0 982.4 L92.2 978.7 L86.6 974.9 L81.2 970.9 L76.0 966.7 L71.0 962.3 L66.3 957.7 L61.7 953.0 L57.3 948.0 L53.1 942.8 L49.1 937.4 L45.3 931.8 L41.6 926.0 L38.1 919.9 L34.8 913.5 L31.6 906.9 L28.6 900.0 L25.8 892.8 L23.1 885.3 L20.6 877.5 L18.2 869.3 L16.0 860.7 L13.9 851.6 L12.0 842.1 L10.2 832.1 L8.5 821.5 L7.1 810.2 L5.7 798.1 L4.5 785.2 L3.4 771.1 L2.5 755.8 L1.8 738.8 L1.1 719.5 L0.6 697.0 L0.3 669.3 L0.1 631.2 L0.0 512.0 L0.1 392.8 L0.3 354.7 L0.6 327.0 L1.1 304.5 L1.8 285.2 L2.5 268.2 L3.4 252.9 L4.5 238.8 L5.7 225.9 L7.1 213.8 L8.5 202.5 L10.2 191.9 L12.0 181.9 L13.9 172.4 L16.0 163.3 L18.2 154.7 L20.6 146.5 L23.1 138.7 L25.8 131.2 L28.6 124.0 L31.6 117.1 L34.8 110.5 L38.1 104.1 L41.6 98.0 L45.3 92.2 L49.1 86.6 L53.1 81.2 L57.3 76.0 L61.7 71.0 L66.3 66.3 L71.0 61.7 L76.0 57.3 L81.2 53.1 L86.6 49.1 L92.2 45.3 L98.0 41.6 L104.1 38.1 L110.5 34.8 L117.1 31.6 L124.0 28.6 L131.2 25.8 L138.7 23.1 L146.5 20.6 L154.7 18.2 L163.3 16.0 L172.4 13.9 L181.9 12.0 L191.9 10.2 L202.5 8.5 L213.8 7.1 L225.9 5.7 L238.8 4.5 L252.9 3.4 L268.2 2.5 L285.2 1.8 L304.5 1.1 L327.0 0.6 L354.7 0.3 L392.8 0.1 L512.0 0.0 L631.2 0.1 L669.3 0.3 L697.0 0.6 L719.5 1.1 L738.8 1.8 L755.8 2.5 L771.1 3.4 L785.2 4.5 L798.1 5.7 L810.2 7.1 L821.5 8.5 L832.1 10.2 L842.1 12.0 L851.6 13.9 L860.7 16.0 L869.3 18.2 L877.5 20.6 L885.3 23.1 L892.8 25.8 L900.0 28.6 L906.9 31.6 L913.5 34.8 L919.9 38.1 L926.0 41.6 L931.8 45.3 L937.4 49.1 L942.8 53.1 L948.0 57.3 L953.0 61.7 L957.7 66.3 L962.3 71.0 L966.7 76.0 L970.9 81.2 L974.9 86.6 L978.7 92.2 L982.4 98.0 L985.9 104.1 L989.2 110.5 L992.4 117.1 L995.4 124.0 L998.2 131.2 L1000.9 138.7 L1003.4 146.5 L1005.8 154.7 L1008.0 163.3 L1010.1 172.4 L1012.0 181.9 L1013.8 191.9 L1015.5 202.5 L1016.9 213.8 L1018.3 225.9 L1019.5 238.8 L1020.6 252.9 L1021.5 268.2 L1022.2 285.2 L1022.9 304.5 L1023.4 327.0 L1023.7 354.7 L1023.9 392.8Z" transform="translate(100 100) scale(0.8046875)"/>
     <clipPath id="sqc"><use href="#sq"/></clipPath>
-    <linearGradient id="mark" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#d4d6f0"/></linearGradient>
-    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".45"/><stop offset=".25" stop-color="#fff" stop-opacity=".06"/><stop offset=".8" stop-color="#fff" stop-opacity=".08"/><stop offset="1" stop-color="#fff" stop-opacity=".35"/></linearGradient>
-    <filter id="icon-shadow" filterUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024"><feGaussianBlur in="SourceAlpha" stdDeviation="18"/><feOffset dy="14"/><feComponentTransfer><feFuncA type="linear" slope=".55"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter>
-    <filter id="mark-shadow" filterUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024"><feGaussianBlur in="SourceAlpha" stdDeviation="8"/><feOffset dy="6"/><feComponentTransfer><feFuncA type="linear" slope=".28"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter>
-    <symbol id="logo-halves" viewBox="0 0 1024 1024">
-      <defs>
-        <linearGradient id="bg-halves" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1a1236"/><stop offset="1" stop-color="#7357f0"/></linearGradient>
-      </defs>
-      <g filter="url(#icon-shadow)"><use href="#sq" fill="url(#bg-halves)"/></g>
-      <use href="#sq" fill="none" stroke="url(#rim)" stroke-width="4" clip-path="url(#sqc)"/>
-      <g filter="url(#mark-shadow)"><g transform="translate(512 512) scale(1.12) translate(-256 -256)" fill="url(#mark)"><path d="M240 72A176 176 0 0 0 240 424Z"/><path d="M272 88A176 176 0 0 1 272 440Z"/></g></g>
-    </symbol>
-    <symbol id="logo-twins" viewBox="0 0 1024 1024">
-      <defs>
-        <linearGradient id="bg-twins" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#10153a"/><stop offset="1" stop-color="#5468e8"/></linearGradient>
-      </defs>
-      <g filter="url(#icon-shadow)"><use href="#sq" fill="url(#bg-twins)"/></g>
-      <use href="#sq" fill="none" stroke="url(#rim)" stroke-width="4" clip-path="url(#sqc)"/>
-      <g filter="url(#mark-shadow)"><g transform="translate(512 512) scale(1.12) translate(-256 -256)" fill="url(#mark)"><mask id="tw2"><rect width="512" height="512" fill="#fff"/><circle cx="300" cy="226" r="152" fill="#000"/></mask><circle cx="206" cy="300" r="150" mask="url(#tw2)"/><circle cx="300" cy="226" r="130"/></g></g>
-    </symbol>
-    <symbol id="logo-daybreak" viewBox="0 0 1024 1024">
-      <defs>
-        <linearGradient id="bg-daybreak" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2a1238"/><stop offset="1" stop-color="#f08a4b"/></linearGradient>
-      </defs>
-      <g filter="url(#icon-shadow)"><use href="#sq" fill="url(#bg-daybreak)"/></g>
-      <use href="#sq" fill="none" stroke="url(#rim)" stroke-width="4" clip-path="url(#sqc)"/>
-      <g filter="url(#mark-shadow)"><g transform="translate(512 512) scale(1.12) translate(-256 -256)" fill="url(#mark)"><path d="M84 292A172 172 0 0 1 428 292Z"/><rect x="84" y="324" width="344" height="44" rx="22"/><rect x="150" y="396" width="212" height="44" rx="22"/></g></g>
-    </symbol>
+    <filter id="icon-shadow" filterUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="18"/><feOffset dy="14"/>
+      <feComponentTransfer><feFuncA type="linear" slope=".5"/></feComponentTransfer>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="mark-shadow" filterUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="8"/><feOffset dy="6"/>
+      <feComponentTransfer><feFuncA type="linear" slope=".28"/></feComponentTransfer>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="glow" filterUnits="userSpaceOnUse" x="-200" y="-200" width="1424" height="1424">
+      <feGaussianBlur stdDeviation="44"/>
+    </filter>
+    <filter id="soft" filterUnits="userSpaceOnUse" x="-200" y="-200" width="1424" height="1424">
+      <feGaussianBlur stdDeviation="3"/>
+    </filter>
+    <!-- Film grain: monochrome fractal noise, shown at low opacity. -->
+    <filter id="grain" filterUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" seed="7" stitchTiles="stitch"/>
+      <feColorMatrix type="saturate" values="0"/>
+      <feComponentTransfer>
+        <feFuncR type="linear" slope="1.6" intercept="-0.3"/>
+        <feFuncG type="linear" slope="1.6" intercept="-0.3"/>
+        <feFuncB type="linear" slope="1.6" intercept="-0.3"/>
+      </feComponentTransfer>
+    </filter>
+    <radialGradient id="sheen" cx=".3" cy=".18" r=".8">
+      <stop offset="0" stop-color="#fff" stop-opacity=".22"/><stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity=".5"/><stop offset=".25" stop-color="#fff" stop-opacity=".06"/>
+      <stop offset=".8" stop-color="#fff" stop-opacity=".08"/><stop offset="1" stop-color="#fff" stop-opacity=".35"/>
+    </linearGradient>
   </defs>
 </svg>
 
 <div class="wrap">
-  <header>
-    <div>
-      <h1>Leto logo concepts</h1>
-      <p class="lede">Three directions for Leto's icon, built like Helium's: one bold geometric mark in off-white on a single rich colour, on the macOS icon grid. Each is shown at full size,
-        at the sizes macOS uses, and with the wordmark. Star the ones you like; your picks are saved in this browser.</p>
-    </div>
-    <div class="controls" role="group" aria-label="Background">
-      <button class="chip" data-theme-choice="auto" aria-pressed="true">Auto</button>
-      <button class="chip" data-theme-choice="light" aria-pressed="false">Light</button>
-      <button class="chip" data-theme-choice="dark" aria-pressed="false">Dark</button>
-    </div>
-  </header>
+  <h1>Leto logo explorer</h1>
+  <p class="lede">Bold geometric marks in the spirit of Helium's icon, each in twelve colours and four finishes:
+    solid, liquid glass, film grain, and glass with grain. Click an icon for a closer look at real sizes, with the
+    wordmark and in the Dock. Star the ones you like; your picks are saved in this browser.</p>
 
-  <main class="grid" id="grid"></main>
-
-  <section class="preview">
-    <h3>In the Dock and menu bar</h3>
-    <p>All three at real size, to judge how they read next to each other and when small.</p>
-    <div class="desktop">
-      <div class="menubar">
-        <span>Leto</span><span style="font-weight:400">File</span><span style="font-weight:400">Edit</span><span style="font-weight:400">View</span>
-        <span class="tray" id="tray"></span>
-      </div>
-      <div class="dock" id="dock"></div>
+  <div class="toolbar">
+    <div class="group" id="finishes"><span>Finish</span></div>
+    <div class="group" id="marks"><span>Mark</span></div>
+    <div class="group">
+      <span>Show</span>
+      <button class="chip" id="favs" aria-pressed="false">★ Favorites</button>
     </div>
-  </section>
+    <div class="group" id="themes"><span>Page</span></div>
+  </div>
+
+  <main id="gallery"></main>
 </div>
 
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-hidden="true"></aside>
+
 <script>
-  const concepts = [
-    {
-      id: 'halves', name: 'Halves',
-      font: '-apple-system, "SF Pro Display", system-ui, sans-serif', weight: 650,
-      desc: 'One disc split in two, the halves slightly offset: the twin sun and moon of the Leto myth, or two Spaces sliding past each other. Bold and simple enough to read at 16 px.',
-      palette: ['#1a1236', '#7357f0', '#ffffff', '#d4d6f0'],
-    },
-    {
-      id: 'twins', name: 'Twins',
-      font: 'ui-serif, "New York", Georgia, serif', weight: 500,
-      desc: 'The moon passing in front of the sun, separated by a clean gap. A quiet nod to Apollo and Artemis, Leto\'s twins.',
-      palette: ['#10153a', '#5468e8', '#ffffff', '#d4d6f0'],
-    },
-    {
-      id: 'daybreak', name: 'Daybreak',
-      font: 'ui-serif, "New York", Georgia, serif', weight: 600,
-      desc: 'The sun rising over Delos, the island where Leto found a home, with its reflection below. Warm and calm.',
-      palette: ['#2a1238', '#f08a4b', '#ffffff', '#d4d6f0'],
-    },
+  // Marks on a 512 grid, filled with the mark paint. `id` keeps mask ids unique.
+  const MARKS = [
+    { key: 'halves', name: 'Halves',
+      desc: 'One disc split in two with the halves offset: the twin sun and moon, or two Spaces sliding past each other.',
+      svg: () => '<path d="M240 72A176 176 0 0 0 240 424Z"/><path d="M272 88A176 176 0 0 1 272 440Z"/>' },
+    { key: 'twins', name: 'Twins',
+      desc: 'The moon passing in front of the sun, a clean gap between them. Apollo and Artemis, Leto’s twins.',
+      svg: id => `<mask id="tw-${id}"><rect width="512" height="512" fill="#fff"/><circle cx="300" cy="226" r="152" fill="#000"/></mask>
+        <circle cx="206" cy="300" r="150" mask="url(#tw-${id})"/><circle cx="300" cy="226" r="130"/>` },
+    { key: 'daybreak', name: 'Daybreak',
+      desc: 'The sun rising over Delos, where Leto found a home, with its reflection below.',
+      svg: () => '<path d="M84 292A172 172 0 0 1 428 292Z"/><rect x="84" y="324" width="344" height="44" rx="22"/><rect x="150" y="396" width="212" height="44" rx="22"/>' },
+    { key: 'phase', name: 'Phase',
+      desc: 'A bold crescent: the moon turning, like Spaces turning past.',
+      svg: id => `<mask id="ph-${id}"><rect width="512" height="512" fill="#fff"/><circle cx="330" cy="196" r="150" fill="#000"/></mask>
+        <circle cx="256" cy="256" r="182" mask="url(#ph-${id})"/>` },
+    { key: 'orbit', name: 'Orbit',
+      desc: 'A sun held inside an open ring: everything you browse kept together in one place.',
+      svg: id => `<mask id="or-${id}"><rect width="512" height="512" fill="#fff"/><path d="M256 256L512 20L512 160Z" fill="#000"/></mask>
+        <circle cx="256" cy="256" r="160" fill="none" stroke-width="48" mask="url(#or-${id})" class="stroke"/>
+        <circle cx="256" cy="256" r="84"/>` },
+    { key: 'arch', name: 'Arch',
+      desc: 'A doorway: the island home of the myth, and a window onto the web.',
+      svg: () => '<path fill-rule="evenodd" d="M106 440V262A150 150 0 0 1 406 262V440ZM196 440V292A60 60 0 0 1 316 292V440Z"/>' },
+    { key: 'bands', name: 'Bands',
+      desc: 'Three nested arches, one per Space, rising together.',
+      svg: () => '<path fill-rule="evenodd" d="M70 400A186 186 0 0 1 442 400H396A140 140 0 0 0 116 400Z"/><path d="M136 400A120 120 0 0 1 376 400H330A74 74 0 0 0 182 400Z"/><path d="M202 400A54 54 0 0 1 310 400Z"/>' },
+    { key: 'pane', name: 'Pane',
+      desc: 'Sidebar and page as two solid shapes in one rounded window: Leto’s layout at its simplest.',
+      svg: () => '<path d="M86 166A80 80 0 0 1 166 86H196V426H166A80 80 0 0 1 86 346Z"/><path d="M228 86H346A80 80 0 0 1 426 166V346A80 80 0 0 1 346 426H228Z"/>' },
+    { key: 'eclipse', name: 'Eclipse',
+      desc: 'A ring of light with a single bright jewel where the sun breaks through.',
+      svg: id => `<mask id="ec-${id}"><rect width="512" height="512" fill="#fff"/><circle cx="256" cy="256" r="124" fill="#000"/><circle cx="374" cy="138" r="62" fill="#000"/></mask>
+        <circle cx="256" cy="256" r="184" mask="url(#ec-${id})"/><circle cx="374" cy="138" r="40"/>` },
   ];
 
-  const use = (id, size) =>
-    `<svg width="${size}" height="${size}" viewBox="0 0 1024 1024" role="img" aria-label="${id} logo"><use href="#logo-${id}"/></svg>`;
+  // Background top and bottom colours; light palettes take a dark mark.
+  const PALETTES = [
+    { key: 'iris', name: 'Iris', top: '#1a1236', bottom: '#7357f0', glow: '#a594ff' },
+    { key: 'cobalt', name: 'Cobalt', top: '#0b1a4a', bottom: '#3d6cf0', glow: '#8fb0ff' },
+    { key: 'ocean', name: 'Ocean', top: '#062a3a', bottom: '#18a3b8', glow: '#7fe6f0' },
+    { key: 'forest', name: 'Forest', top: '#0a2e24', bottom: '#2fae7f', glow: '#8ff0c4' },
+    { key: 'citrus', name: 'Citrus', top: '#3d2400', bottom: '#ffb52e', glow: '#ffe08a' },
+    { key: 'sunset', name: 'Sunset', top: '#2a1238', bottom: '#f08a4b', glow: '#ffc49a' },
+    { key: 'ember', name: 'Ember', top: '#2a0d12', bottom: '#f0553c', glow: '#ffa08a' },
+    { key: 'rose', name: 'Rose', top: '#3a0e24', bottom: '#ef5b8b', glow: '#ffb0cb' },
+    { key: 'aurora', name: 'Aurora', top: '#141a52', bottom: '#2fc9b8', mid: '#6d4cff', glow: '#9ff5e8' },
+    { key: 'graphite', name: 'Graphite', top: '#0f0f12', bottom: '#4b4b55', glow: '#b8b8c8' },
+    { key: 'sand', name: 'Sand', top: '#fbf6ec', bottom: '#e5d2b2', glow: '#ffffff', ink: '#2a2118', light: true },
+    { key: 'lilac', name: 'Lilac', top: '#f6f2ff', bottom: '#d6c8ff', glow: '#ffffff', ink: '#33247f', light: true },
+  ];
 
-  const favorites = new Set((() => {
-    try { return JSON.parse(localStorage.getItem('leto-logo-favorites') || '[]'); }
-    catch { return []; }
-  })());
-  const saveFavorites = () => {
-    try { localStorage.setItem('leto-logo-favorites', JSON.stringify([...favorites])); } catch {}
+  const FINISHES = [
+    { key: 'solid', name: 'Solid' },
+    { key: 'glass', name: 'Liquid glass' },
+    { key: 'grain', name: 'Grain' },
+    { key: 'glassgrain', name: 'Glass + grain' },
+  ];
+
+  let counter = 0;
+
+  // Builds one icon. `uid` keeps every gradient and mask id unique on the page.
+  function icon(mark, pal, finish, size) {
+    const uid = 'i' + (counter++);
+    const glass = finish === 'glass' || finish === 'glassgrain';
+    const grain = finish === 'grain' || finish === 'glassgrain';
+    const ink = pal.ink || '#ffffff';
+    const inkLow = pal.light ? pal.ink : '#d4d6f0';
+    const stops = pal.mid
+      ? `<stop offset="0" stop-color="${pal.top}"/><stop offset=".55" stop-color="${pal.mid}"/><stop offset="1" stop-color="${pal.bottom}"/>`
+      : `<stop offset="0" stop-color="${pal.top}"/><stop offset="1" stop-color="${pal.bottom}"/>`;
+    const markSvg = mark.svg(uid);
+    // Marks drawn with strokes (Orbit's ring) take the paint as a stroke too.
+    const paintMark = (fill, stroke = 'none', strokeWidth = 0, extra = '') =>
+      `<g transform="translate(512 512) scale(1.12) translate(-256 -256)" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" ${extra}>${
+        markSvg.replace(/class="stroke"/g, `stroke="${fill === 'none' ? stroke : fill}"`)}</g>`;
+
+    let markLayer;
+    if (!glass) {
+      markLayer = `<g filter="url(#mark-shadow)">${paintMark(`url(#mk-${uid})`)}</g>`;
+    } else {
+      // Liquid glass: a glow behind, a translucent body, light gathering at the
+      // top, and a bright rim where the glass catches the light.
+      markLayer = `
+        <g opacity="${pal.light ? .5 : .95}" filter="url(#glow)">${paintMark(pal.glow)}</g>
+        <g filter="url(#mark-shadow)" opacity=".98">${paintMark(`url(#gb-${uid})`)}</g>
+        <g mask="url(#mm-${uid})">
+          ${paintMark('none', `url(#gr-${uid})`, 9)}
+        </g>
+        <g mask="url(#mm-${uid})"><rect width="1024" height="560" fill="url(#gs-${uid})"/></g>`;
+    }
+
+    return `<svg viewBox="0 0 1024 1024" width="${size}" height="${size}" role="img" aria-label="${mark.name}, ${pal.name}">
+      <defs>
+        <linearGradient id="bg-${uid}" x1="0" y1="0" x2="${pal.mid ? 1 : 0}" y2="1">${stops}</linearGradient>
+        <linearGradient id="mk-${uid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${ink}"/><stop offset="1" stop-color="${inkLow}"/></linearGradient>
+        <linearGradient id="gb-${uid}" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="${ink}" stop-opacity="${pal.light ? .92 : .9}"/>
+          <stop offset=".55" stop-color="${pal.light ? ink : pal.glow}" stop-opacity="${pal.light ? .8 : .55}"/>
+          <stop offset="1" stop-color="${pal.light ? ink : pal.glow}" stop-opacity="${pal.light ? .72 : .42}"/>
+        </linearGradient>
+        <linearGradient id="gr-${uid}" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#fff" stop-opacity="1"/><stop offset=".45" stop-color="#fff" stop-opacity=".35"/><stop offset="1" stop-color="#fff" stop-opacity=".85"/>
+        </linearGradient>
+        <linearGradient id="gs-${uid}" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset="1" stop-color="#fff" stop-opacity="0"/>
+        </linearGradient>
+        <mask id="mm-${uid}">${paintMark('#fff')}</mask>
+      </defs>
+      <g filter="url(#icon-shadow)"><use href="#sq" fill="url(#bg-${uid})"/></g>
+      <g clip-path="url(#sqc)">
+        ${glass ? '<rect width="1024" height="1024" fill="url(#sheen)"/>' : ''}
+        ${markLayer}
+        ${grain ? `<rect width="1024" height="1024" filter="url(#grain)" opacity="${pal.light ? .12 : .16}" style="mix-blend-mode:overlay"/>` : ''}
+      </g>
+      <use href="#sq" fill="none" stroke="url(#rim)" stroke-width="4" clip-path="url(#sqc)"/>
+    </svg>`;
+  }
+
+  // State, with favourites and choices remembered in this browser.
+  const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
+  const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+  const state = {
+    finish: load('leto-explorer-finish', 'glass'),
+    mark: load('leto-explorer-mark', 'all'),
+    favsOnly: false,
+    favs: new Set(load('leto-explorer-favs', [])),
   };
+  const favKey = (m, p, f) => `${m}/${p}/${f}`;
 
-  const grid = document.getElementById('grid');
-  concepts.forEach((c, i) => {
-    const card = document.createElement('article');
-    card.className = 'card' + (favorites.has(c.id) ? ' favorite' : '');
-    card.innerHTML = `
-      <div class="fav"><button aria-label="Favorite ${c.name}" aria-pressed="${favorites.has(c.id)}">★</button></div>
-      <div class="card-head"><h2>${c.name}</h2><span class="num">0${i + 1}</span></div>
-      <div class="hero">${use(c.id, 200)}</div>
-      <div class="sizes">
-        ${[128, 64, 32, 16].map(s => `<figure>${use(c.id, s)}<figcaption>${s}</figcaption></figure>`).join('')}
-      </div>
-      <div class="lockup">${use(c.id, 40)}<span style="font-family:${c.font};font-weight:${c.weight}">Leto</span></div>
-      <p class="desc">${c.desc}</p>
-      <div class="palette">${c.palette.map(p => `<i style="background:${p}" title="${p}"></i>`).join('')}</div>`;
-    card.querySelector('.fav button').addEventListener('click', e => {
-      if (favorites.has(c.id)) favorites.delete(c.id); else favorites.add(c.id);
-      saveFavorites();
-      card.classList.toggle('favorite', favorites.has(c.id));
-      e.currentTarget.setAttribute('aria-pressed', favorites.has(c.id));
+  function chips(container, items, current, onPick) {
+    items.forEach(it => {
+      const b = document.createElement('button');
+      b.className = 'chip'; b.textContent = it.name; b.dataset.key = it.key;
+      b.setAttribute('aria-pressed', it.key === current);
+      b.addEventListener('click', () => {
+        container.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b));
+        onPick(it.key);
+      });
+      container.appendChild(b);
     });
-    grid.appendChild(card);
+  }
+  chips(document.getElementById('finishes'), FINISHES, state.finish, k => { state.finish = k; save('leto-explorer-finish', k); render(); });
+  chips(document.getElementById('marks'), [{ key: 'all', name: 'All' }, ...MARKS], state.mark, k => { state.mark = k; save('leto-explorer-mark', k); render(); });
+  document.getElementById('favs').addEventListener('click', e => {
+    state.favsOnly = !state.favsOnly; e.currentTarget.setAttribute('aria-pressed', state.favsOnly); render();
   });
 
-  document.getElementById('dock').innerHTML = concepts.map(c => use(c.id, 60)).join('');
-  document.getElementById('tray').innerHTML = concepts.map(c => use(c.id, 16)).join('');
-
   const root = document.documentElement;
-  const buttons = document.querySelectorAll('[data-theme-choice]');
-  const applyTheme = choice => {
-    if (choice === 'auto') root.removeAttribute('data-theme'); else root.setAttribute('data-theme', choice);
-    buttons.forEach(b => b.setAttribute('aria-pressed', b.dataset.themeChoice === choice));
-    try { localStorage.setItem('leto-logo-theme', choice); } catch {}
-  };
-  buttons.forEach(b => b.addEventListener('click', () => applyTheme(b.dataset.themeChoice)));
-  try { applyTheme(localStorage.getItem('leto-logo-theme') || 'auto'); } catch { applyTheme('auto'); }
+  chips(document.getElementById('themes'),
+        [{ key: 'auto', name: 'Auto' }, { key: 'light', name: 'Light' }, { key: 'dark', name: 'Dark' }],
+        load('leto-explorer-theme', 'auto'),
+        k => { if (k === 'auto') root.removeAttribute('data-theme'); else root.setAttribute('data-theme', k); save('leto-explorer-theme', k); });
+  { const t = load('leto-explorer-theme', 'auto'); if (t !== 'auto') root.setAttribute('data-theme', t); }
+
+  function render() {
+    counter = 0;
+    const gallery = document.getElementById('gallery');
+    gallery.innerHTML = '';
+    const finishes = state.favsOnly ? FINISHES : FINISHES.filter(f => f.key === state.finish);
+    MARKS.filter(m => state.mark === 'all' || m.key === state.mark).forEach(mark => {
+      const tiles = [];
+      finishes.forEach(fin => PALETTES.forEach(pal => {
+        const key = favKey(mark.key, pal.key, fin.key);
+        if (state.favsOnly && !state.favs.has(key)) return;
+        tiles.push({ mark, pal, fin, key });
+      }));
+      if (!tiles.length) return;
+      const section = document.createElement('section');
+      section.className = 'mark';
+      section.innerHTML = `<h2>${mark.name}</h2><p>${mark.desc}</p><div class="row"></div>`;
+      const row = section.querySelector('.row');
+      tiles.forEach(t => {
+        const tile = document.createElement('div');
+        tile.className = 'tile' + (state.favs.has(t.key) ? ' favorite' : '');
+        tile.innerHTML = `<span class="star">★</span>${icon(t.mark, t.pal, t.fin.key, 116)}<span class="name">${t.pal.name}${state.favsOnly ? ' · ' + t.fin.name : ''}</span>`;
+        tile.addEventListener('click', () => openDetail(t, tile));
+        row.appendChild(tile);
+      });
+      gallery.appendChild(section);
+    });
+    if (!gallery.children.length) {
+      gallery.innerHTML = '<p class="lede" style="margin-top:28px">No favorites yet. Click an icon, then star it.</p>';
+    }
+  }
+
+  const drawer = document.getElementById('drawer');
+  const scrim = document.getElementById('scrim');
+  function closeDetail() { drawer.classList.remove('open'); scrim.classList.remove('open'); drawer.setAttribute('aria-hidden', 'true'); }
+  scrim.addEventListener('click', closeDetail);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDetail(); });
+
+  function openDetail(t, tile) {
+    const { mark, pal, fin, key } = t;
+    const neighbours = ['#ff9f0a', '#30d158', '#0a84ff', '#bf5af2'];
+    drawer.innerHTML = `
+      <header>
+        <div><h3>${mark.name}</h3><div class="sub">${pal.name} · ${fin.name}</div></div>
+        <button class="close" aria-label="Close">×</button>
+      </header>
+      <div class="big">${icon(mark, pal, fin.key, 300)}</div>
+      <div class="sizes">${[128, 64, 32, 16].map(s => `<figure>${icon(mark, pal, fin.key, s)}<figcaption>${s}</figcaption></figure>`).join('')}</div>
+      <div class="lockup">${icon(mark, pal, fin.key, 44)}<span>Leto</span></div>
+      <div class="dockprev"><div class="dock">
+        <div class="app" style="background:linear-gradient(${neighbours[0]},#ff6a00)"></div>
+        <div class="app" style="background:linear-gradient(${neighbours[1]},#0f9d58)"></div>
+        ${icon(mark, pal, fin.key, 52)}
+        <div class="app" style="background:linear-gradient(${neighbours[2]},#0040dd)"></div>
+        <div class="app" style="background:linear-gradient(${neighbours[3]},#7d2ae8)"></div>
+      </div></div>
+      <p class="sub">${mark.desc}</p>
+      <button class="chip fav-btn" aria-pressed="${state.favs.has(key)}">${state.favs.has(key) ? '★ Starred' : '☆ Star this one'}</button>`;
+    drawer.querySelector('.close').addEventListener('click', closeDetail);
+    const favBtn = drawer.querySelector('.fav-btn');
+    favBtn.addEventListener('click', () => {
+      if (state.favs.has(key)) state.favs.delete(key); else state.favs.add(key);
+      save('leto-explorer-favs', [...state.favs]);
+      favBtn.setAttribute('aria-pressed', state.favs.has(key));
+      favBtn.textContent = state.favs.has(key) ? '★ Starred' : '☆ Star this one';
+      tile.classList.toggle('favorite', state.favs.has(key));
+    });
+    drawer.classList.add('open'); scrim.classList.add('open'); drawer.setAttribute('aria-hidden', 'false');
+  }
+
+  render();
 </script>
 </body>
 </html>
