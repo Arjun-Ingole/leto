@@ -1,0 +1,140 @@
+--- a/chrome/browser/ui/views/tabs/common/pinned_tab_container_view.cc
++++ b/chrome/browser/ui/views/tabs/common/pinned_tab_container_view.cc
+@@ -411,18 +411,9 @@ views::ProposedLayout PinnedTabContainer
+         size_bounds.width().value() -
+         GetLayoutConstant(LayoutConstant::kVerticalTabStripHorizontalPadding);
+ 
+-    // When we are in collapsed state, only one child should be shown per row.
+-    // During collapse animation and other cases, fit as many as possible.
+-    children_on_row =
+-        tabs::IsVerticalTabsExpandOnHoverFeatureEnabled() &&
+-                collapse_state ==
+-                    tabs::VerticalTabStripCollapseState::kCollapsed
+-            ? 1
+-            : std::min(
+-                  children_on_row,
+-                  static_cast<int>(std::floor((available_width - child_width) /
+-                                              (child_width + kTabPadding)) +
+-                                   1));
++    // Leto: pinned tabs are rows like the other tabs, one to a row.
++    std::ignore = collapse_state;
++    children_on_row = 1;
+ 
+     // Allocate extra space to the tabs.
+     available_width -=
+--- a/chrome/browser/ui/views/tabs/common/split_tab_view.cc
++++ b/chrome/browser/ui/views/tabs/common/split_tab_view.cc
+@@ -195,7 +195,9 @@ void SplitTabView::OnDataChanged() {
+           collection_node_->GetNodeData());
+   const std::vector<tabs::TabInterface*> tabs =
+       tab_collection->GetTabsRecursive();
+-  pinned_ = tabs[0]->IsPinned();
++  // Leto: pinned tabs in the sidebar look like any other tab.
++  pinned_ = tabs[0]->IsPinned() &&
++            collection_node_->orientation() == TabStripOrientation::kHorizontal;
+ 
+   UpdateBorder();
+ }
+--- a/chrome/browser/ui/views/tabs/common/tab_strip_view.cc
++++ b/chrome/browser/ui/views/tabs/common/tab_strip_view.cc
+@@ -191,6 +191,12 @@ TabStripView::TabStripView(TabCollection
+       views::ScrollView::ScrollWithLayers::kEnabled));
+   SetScrollViewProperties(pinned_tabs_scroll_view_);
+ 
++  // Leto: a line under the pinned tabs, as in Arc.
++  auto* const tabs_separator = AddChildView(std::make_unique<FrameSeparator>());
++  tabs_separator->SetColorId(kColorTabDividerFrameActive);
++  tabs_separator->SetInactiveColorId(kColorTabDividerFrameInactive);
++  tabs_separator_ = tabs_separator;
++
+   unpinned_tabs_scroll_view_ = AddChildView(std::make_unique<views::ScrollView>(
+       views::ScrollView::ScrollWithLayers::kEnabled));
+   SetScrollViewProperties(unpinned_tabs_scroll_view_);
+--- a/chrome/browser/ui/views/tabs/common/tab_strip_view_layout.cc
++++ b/chrome/browser/ui/views/tabs/common/tab_strip_view_layout.cc
+@@ -22,6 +22,9 @@
+ 
+ namespace {
+ 
++// How far the line under the pinned tabs is inset from the tabs' edges.
++constexpr int kSeparatorInset = 8;
++
+ // The pinned container main axis size should not be larger than half the
+ // available space unless the unpinned container will not fill that space.
+ // When pinned tabs are present, the size must be at least as large as the min
+@@ -114,6 +117,10 @@ views::ProposedLayout TabStripViewLayout
+   layouts.child_layouts.emplace_back(pinned_tabs_scroll_view,
+                                      pinned_tabs_scroll_view->GetVisible(),
+                                      pinned_bounds);
++  // Leto's separator only shows in the sidebar.
++  if (views::Separator* tabs_separator = tab_strip_view->GetTabsSeparator()) {
++    layouts.child_layouts.emplace_back(tabs_separator, false, gfx::Rect());
++  }
+   const bool has_unpinned = unpinned_preferred_width > 0;
+   const bool is_pinned_overflowing = pinned_width < pinned_preferred_width;
+ 
+@@ -222,6 +229,7 @@ views::ProposedLayout TabStripViewLayout
+       tab_strip_view->pinned_tabs_scroll_view();
+   views::ScrollView* unpinned_tabs_scroll_view =
+       tab_strip_view->unpinned_tabs_scroll_view();
++  views::Separator* tabs_separator = tab_strip_view->GetTabsSeparator();
+ 
+   if (!size_bounds.width().is_bounded()) {
+     return layouts;
+@@ -247,12 +255,21 @@ views::ProposedLayout TabStripViewLayout
+ 
+   // If the height is bounded, calculate the available space for laying out the
+   // pinned and unpinned containers.
++  const bool should_show_separator =
++      tabs_separator && pinned_preferred_height != 0 &&
++      unpinned_preferred_height != 0;
++  const int separator_height =
++      should_show_separator
++          ? tabs_separator->GetPreferredSize().height() +
++                region_vertical_padding
++          : 0;
+   int remaining_height = 0;
+   if (size_bounds.height().is_bounded()) {
+     remaining_height = size_bounds.height().value();
+     if (pinned_preferred_height != 0 && unpinned_preferred_height != 0) {
+       remaining_height -= region_vertical_padding;
+     }
++    remaining_height -= separator_height;
+     // Clamp the remaining height to 0 if we have less space.
+     remaining_height = std::max(remaining_height, 0);
+   }
+@@ -286,6 +303,21 @@ views::ProposedLayout TabStripViewLayout
+     }
+   }
+ 
++  // Leto: the line between the pinned tabs and the rest, inset to the tabs'
++  // contents.
++  if (tabs_separator) {
++    gfx::Rect separator_bounds;
++    if (should_show_separator) {
++      const int inset = region_horizontal_padding + kSeparatorInset;
++      separator_bounds =
++          gfx::Rect(inset, y, size_bounds.width().value() - 2 * inset,
++                    tabs_separator->GetPreferredSize().height());
++      y += separator_height;
++    }
++    layouts.child_layouts.emplace_back(tabs_separator, should_show_separator,
++                                       separator_bounds);
++  }
++
+   // Place the unpinned container using the entire available width, we do not
+   // inset the x value by `region_horizontal_padding` here because, when the tab
+   // strip is collapsed, tab groups need to draw the group colored line in this
+--- a/chrome/browser/ui/views/tabs/common/tab_view.cc
++++ b/chrome/browser/ui/views/tabs/common/tab_view.cc
+@@ -1119,7 +1119,9 @@ void TabView::OnTabStateChanged() {
+ 
+   active_ = tab_strip_model->IsTabInForeground(index);
+   split_ = tab->IsSplit();
+-  pinned_ = tab->IsPinned();
++  // Leto: pinned tabs in the sidebar look like any other tab; only their
++  // place above the separator sets them apart.
++  pinned_ = tab->IsPinned() && orientation_ == TabStripOrientation::kHorizontal;
+ 
+   SetSelection(tab->IsSelected());
+   UpdateTabData(tab_data_observer_->tab_data());
