@@ -1,0 +1,380 @@
+--- a/chrome/browser/ui/browser_command_controller.cc
++++ b/chrome/browser/ui/browser_command_controller.cc
+@@ -882,6 +882,11 @@ void BrowserCommandController::HandleCom
+       MoveActiveTabToNewWindow(browser_);
+       break;
+     case IDC_NEW_SPLIT_TAB:
++      // Leto: ask what goes in the new pane, as Arc does.
++      if (leto::UsesCommandBar(browser_)) {
++        leto::StartSplitView(browser_);
++        break;
++      }
+       if (!browser_->tab_strip_model()->GetActiveTab()->IsSplit()) {
+         NewSplitTab(browser_, split_tabs::SplitTabLayout::kSideBySide,
+                     split_tabs::SplitTabCreatedSource::kKeyboardShortcut);
+--- a/chrome/browser/ui/views/frame/browser_native_widget_mac.mm
++++ b/chrome/browser/ui/views/frame/browser_native_widget_mac.mm
+@@ -40,6 +40,7 @@
+ #include "chrome/browser/ui/views/frame/browser_view.h"
+ #include "chrome/browser/ui/views/frame/browser_widget.h"
+ #include "chrome/browser/ui/views/frame/vertical_tab_strip_region_view.h"
++#include "chrome/browser/ui/views/leto/command_bar.h"
+ #include "chrome/browser/ui/views/web_apps/frame_toolbar/web_app_frame_toolbar_utils.h"
+ #include "chrome/browser/ui/web_applications/app_browser_controller.h"
+ #include "chrome/browser/profiles/profile.h"
+@@ -576,6 +577,11 @@ bool BrowserNativeWidgetMac::ExecuteComm
+         is_tab_menu ? split_tabs::SplitTabCreatedSource::kMacMenuBar
+                     : split_tabs::SplitTabCreatedSource::kKeyboardShortcut;
+ 
++    // Leto: ask what goes in the new pane, as Arc does.
++    if (leto::UsesCommandBar(browser)) {
++      leto::StartSplitView(browser);
++      return true;
++    }
+     if (!browser->tab_strip_model()->GetActiveTab()->IsSplit()) {
+       chrome::NewSplitTab(browser, split_tabs::SplitTabLayout::kSideBySide,
+                           source);
+--- a/chrome/browser/ui/views/leto/command_bar.h
++++ b/chrome/browser/ui/views/leto/command_bar.h
+@@ -17,6 +17,9 @@ enum class CommandBarMode {
+   kCurrentTab,
+   // Opened with Cmd+T: results open in a new tab.
+   kNewTab,
++  // Opened for the empty pane of a new split view: results open in that pane,
++  // and an open tab that is picked takes its place in the split.
++  kSplit,
+ };
+ 
+ // True when the toolbar is hidden and the sidebar holds navigation, which is
+@@ -25,6 +28,10 @@ bool UsesCommandBar(BrowserWindowInterfa
+ 
+ void ShowCommandBar(BrowserWindowInterface* browser, CommandBarMode mode);
+ 
++// Opens an empty pane beside the active tab and asks with the command bar what
++// to show in it, as Arc does. Dismissing the bar closes the pane again.
++void StartSplitView(BrowserWindowInterface* browser);
++
+ }  // namespace leto
+ 
+ #endif  // CHROME_BROWSER_UI_VIEWS_LETO_COMMAND_BAR_H_
+--- a/chrome/browser/ui/views/leto/command_bar_view.cc
++++ b/chrome/browser/ui/views/leto/command_bar_view.cc
+@@ -28,7 +28,10 @@
+ #include "chrome/browser/ui/color/chrome_color_id.h"
+ #include "chrome/browser/ui/navigator/browser_navigator.h"
+ #include "chrome/browser/ui/navigator/browser_navigator_params.h"
++#include "chrome/browser/ui/tabs/split_tab_metrics.h"
++#include "chrome/browser/ui/tabs/tab_enums.h"
+ #include "chrome/browser/ui/tabs/tab_strip_model.h"
++#include "chrome/browser/ui/tabs/tab_strip_model_delegate.h"
+ #include "chrome/browser/ui/views/frame/browser_view.h"
+ #include "chrome/common/pref_names.h"
+ #include "chrome/common/webui_url_constants.h"
+@@ -41,6 +44,8 @@
+ #include "components/omnibox/browser/autocomplete_result.h"
+ #include "components/omnibox/browser/vector_icons.h"
+ #include "components/prefs/pref_service.h"
++#include "components/split_tabs/split_tab_visual_data.h"
++#include "components/tabs/public/tab_interface.h"
+ #include "components/vector_icons/vector_icons.h"
+ #include "content/public/browser/web_contents.h"
+ #include "third_party/metrics_proto/omnibox_event.pb.h"
+@@ -79,6 +84,7 @@
+ #include "ui/views/widget/widget_observer.h"
+ #include "ui/views/window/dialog_client_view.h"
+ #include "url/gurl.h"
++#include "url/url_constants.h"
+ 
+ namespace leto {
+ 
+@@ -103,6 +109,7 @@ constexpr size_t kMaxResults = 8;
+ // TODO(leto): Localize.
+ constexpr char16_t kPlaceholder[] = u"Search or Enter URL...";
+ constexpr char16_t kSwitchToTab[] = u"Switch to Tab";
++constexpr char16_t kAddToSplit[] = u"Add to Split";
+ 
+ bool IsTabMatch(const AutocompleteMatch& match) {
+   return match.has_tab_match.value_or(false) ||
+@@ -118,9 +125,15 @@ class CommandBarResultView : public view
+ 
+  public:
+   CommandBarResultView(CommandBarView* command_bar, size_t index)
+-      : views::Button(base::BindRepeating(&CommandBarView::OpenResult,
+-                                          base::Unretained(command_bar),
+-                                          index)),
++      : views::Button(base::BindRepeating(
++            [](CommandBarView* command_bar,
++               size_t index,
++               const ui::Event& event) {
++              // Shift-click opens the result in split view, like Shift+Enter.
++              command_bar->OpenResult(index, event.IsShiftDown());
++            },
++            base::Unretained(command_bar),
++            index)),
+         command_bar_(command_bar),
+         index_(index) {
+     auto* layout = SetLayoutManager(std::make_unique<views::FlexLayout>());
+@@ -192,6 +205,9 @@ class CommandBarResultView : public view
+     title_->SetText(title);
+     detail_->SetText(detail.empty() ? detail : u"\u2013 " + detail);
+     detail_->SetVisible(!detail.empty());
++    chip_->SetText(command_bar_->mode() == CommandBarMode::kSplit
++                       ? kAddToSplit
++                       : kSwitchToTab);
+     chip_->SetVisible(IsTabMatch(match));
+     GetViewAccessibility().SetName(title + u" " + detail);
+ 
+@@ -335,6 +351,7 @@ void CommandBarHost::Hide(bool refocus_p
+   }
+   widget_->Hide();
+   view_->Stop();
++  view_->CancelEmptySplit();
+   if (!refocus_page) {
+     return;
+   }
+@@ -379,6 +396,24 @@ void CommandBarHost::UpdateBounds() {
+                 width, 0));
+ }
+ 
++// Adds an empty pane beside the active tab, in a new split view with it, and
++// activates the pane. A blank page rather than Chromium's tab picker, which
++// takes focus from the command bar as it loads.
++tabs::TabInterface* AddEmptySplitPane(BrowserWindowInterface* browser) {
++  TabStripModel* model = browser->GetTabStripModel();
++  const int active_index = model->active_index();
++  model->delegate()->AddTabAt(GURL(url::kAboutBlankURL), active_index + 1,
++                              /*foreground=*/true,
++                              model->GetTabGroupForTab(active_index),
++                              model->IsTabPinned(active_index));
++  model->AddToNewSplit(
++      {active_index},
++      split_tabs::SplitTabVisualData(split_tabs::SplitTabLayout::kSideBySide),
++      split_tabs::SplitTabCreatedSource::kKeyboardShortcut);
++  model->ActivateTabAt(active_index + 1);
++  return model->GetActiveTab();
++}
++
+ }  // namespace
+ 
+ bool UsesCommandBar(BrowserWindowInterface* browser) {
+@@ -406,6 +441,15 @@ void ShowCommandBar(BrowserWindowInterfa
+   host->Show(mode);
+ }
+ 
++void StartSplitView(BrowserWindowInterface* browser) {
++  tabs::TabInterface* active = browser->GetTabStripModel()->GetActiveTab();
++  if (!active || active->IsSplit()) {
++    return;
++  }
++  AddEmptySplitPane(browser);
++  ShowCommandBar(browser, CommandBarMode::kSplit);
++}
++
+ CommandBarView::CommandBarView(BrowserView* browser_view,
+                                base::RepeatingClosure dismiss)
+     : browser_view_(browser_view),
+@@ -469,6 +513,14 @@ CommandBarView::~CommandBarView() {
+ void CommandBarView::Start(CommandBarMode mode) {
+   mode_ = mode;
+   Stop();
++  opened_ = false;
++  split_pane_.reset();
++  if (mode_ == CommandBarMode::kSplit) {
++    if (tabs::TabInterface* pane =
++            browser_view_->browser()->GetTabStripModel()->GetActiveTab()) {
++      split_pane_ = pane->GetWeakPtr();
++    }
++  }
+ 
+   // Cmd+L edits the current address; Cmd+T starts from an empty field.
+   std::u16string text;
+@@ -491,6 +543,19 @@ void CommandBarView::Stop() {
+   UpdateResults();
+ }
+ 
++void CommandBarView::CancelEmptySplit() {
++  tabs::TabInterface* pane = split_pane_.get();
++  split_pane_.reset();
++  if (opened_ || !pane || !pane->IsSplit()) {
++    return;
++  }
++  TabStripModel* model = browser_view_->browser()->GetTabStripModel();
++  const int index = model->GetIndexOfTab(pane);
++  if (index != TabStripModel::kNoTab) {
++    model->CloseWebContentsAt(index, TabCloseTypes::CLOSE_NONE);
++  }
++}
++
+ void CommandBarView::SelectResult(size_t index) {
+   if (index >= result_views_.size() || selected_index_ == index) {
+     return;
+@@ -502,10 +567,10 @@ void CommandBarView::SelectResult(size_t
+   result_views_[index]->SetSelected(true);
+ }
+ 
+-void CommandBarView::OpenResult(size_t index) {
++void CommandBarView::OpenResult(size_t index, bool in_split) {
+   const AutocompleteResult& result = autocomplete_controller_->result();
+   if (index < result.size()) {
+-    OpenMatch(result.match_at(index));
++    OpenMatch(result.match_at(index), in_split);
+   }
+ }
+ 
+@@ -559,8 +624,10 @@ bool CommandBarView::HandleKeyEvent(view
+       return true;
+     }
+     case ui::VKEY_RETURN: {
++      // Shift+Enter opens the result in split view, as in Arc.
++      const bool in_split = key_event.IsShiftDown();
+       if (selected_index_) {
+-        OpenResult(*selected_index_);
++        OpenResult(*selected_index_, in_split);
+         return true;
+       }
+       // Nothing listed yet: open what was typed.
+@@ -573,7 +640,7 @@ bool CommandBarView::HandleKeyEvent(view
+           ->Classify(std::u16string(textfield_->GetText()), false, false,
+                      metrics::OmniboxEventProto::OTHER, &match, nullptr);
+       if (match.destination_url.is_valid()) {
+-        OpenMatch(match);
++        OpenMatch(match, in_split);
+       }
+       return true;
+     }
+@@ -646,14 +713,32 @@ void CommandBarView::UpdateResults() {
+   }
+ }
+ 
+-void CommandBarView::OpenMatch(const AutocompleteMatch& match) {
++void CommandBarView::OpenMatch(const AutocompleteMatch& match, bool in_split) {
+   BrowserWindowInterface* browser = browser_view_->browser();
++  opened_ = true;
++  if (in_split && mode_ != CommandBarMode::kSplit) {
++    tabs::TabInterface* active = browser->GetTabStripModel()->GetActiveTab();
++    if (active && !active->IsSplit()) {
++      // `match` fills a new pane, as when the split started from
++      // Cmd+Option+N.
++      split_pane_ = AddEmptySplitPane(browser)->GetWeakPtr();
++      mode_ = CommandBarMode::kSplit;
++    }
++  }
++
+   WindowOpenDisposition disposition =
+       mode_ == CommandBarMode::kNewTab
+           ? WindowOpenDisposition::NEW_FOREGROUND_TAB
+           : WindowOpenDisposition::CURRENT_TAB;
+   if (IsTabMatch(match)) {
+-    disposition = WindowOpenDisposition::SWITCH_TO_TAB;
++    if (mode_ == CommandBarMode::kSplit && MoveTabIntoSplit(match)) {
++      return;
++    }
++    // A tab outside this window can't join the split, so its page opens in
++    // the pane instead.
++    if (mode_ != CommandBarMode::kSplit) {
++      disposition = WindowOpenDisposition::SWITCH_TO_TAB;
++    }
+   }
+   NavigateParams params(
+       browser, match.destination_url,
+@@ -666,6 +751,28 @@ void CommandBarView::OpenMatch(const Aut
+   Navigate(&params);
+ }
+ 
++bool CommandBarView::MoveTabIntoSplit(const AutocompleteMatch& match) {
++  TabStripModel* model = browser_view_->browser()->GetTabStripModel();
++  tabs::TabInterface* pane = model->GetActiveTab();
++  if (!pane || !pane->IsSplit()) {
++    return false;
++  }
++  const GURL url = match.destination_url.GetWithoutRef();
++  for (int index = 0; index < model->count(); ++index) {
++    tabs::TabInterface* tab = model->GetTabAtIndex(index);
++    if (tab->IsSplit() ||
++        tab->GetContents()->GetLastCommittedURL().GetWithoutRef() != url) {
++      continue;
++    }
++    // Hiding clears the results, which `match` may point into.
++    dismiss_.Run();
++    model->UpdateTabInSplit(pane, index,
++                            TabStripModel::SplitUpdateType::kReplace);
++    return true;
++  }
++  return false;
++}
++
+ BEGIN_METADATA(CommandBarView)
+ END_METADATA
+ 
+--- a/chrome/browser/ui/views/leto/command_bar_view.h
++++ b/chrome/browser/ui/views/leto/command_bar_view.h
+@@ -12,6 +12,7 @@
+ 
+ #include "base/functional/callback.h"
+ #include "base/memory/raw_ptr.h"
++#include "base/memory/weak_ptr.h"
+ #include "chrome/browser/ui/views/leto/command_bar.h"
+ #include "components/omnibox/browser/autocomplete_controller.h"
+ #include "components/omnibox/browser/favicon_cache.h"
+@@ -22,6 +23,10 @@
+ class BrowserView;
+ struct AutocompleteMatch;
+ 
++namespace tabs {
++class TabInterface;
++}  // namespace tabs
++
+ namespace views {
+ class Textfield;
+ }  // namespace views
+@@ -48,10 +53,15 @@ class CommandBarView : public views::Vie
+   void Start(CommandBarMode mode);
+   // Stops any running query and clears the results; call when hidden.
+   void Stop();
++  // Closes the pane a split view was started with if nothing was opened in it;
++  // call when the bar is dismissed.
++  void CancelEmptySplit();
++
++  CommandBarMode mode() const { return mode_; }
+ 
+   // For the result rows.
+   void SelectResult(size_t index);
+-  void OpenResult(size_t index);
++  void OpenResult(size_t index, bool in_split = false);
+ 
+   // views::View:
+   void AddedToWidget() override;
+@@ -72,11 +82,19 @@ class CommandBarView : public views::Vie
+  private:
+   void StartQuery(bool prevent_inline_autocomplete);
+   void UpdateResults();
+-  void OpenMatch(const AutocompleteMatch& match);
++  // Opens `match` as the mode says, or beside the current page in a new split
++  // view when `in_split` is set, as Shift+Enter does.
++  void OpenMatch(const AutocompleteMatch& match, bool in_split = false);
++  // Puts the open tab `match` points to into the split in place of the active
++  // pane. Returns false if there is no such tab to move.
++  bool MoveTabIntoSplit(const AutocompleteMatch& match);
+ 
+   raw_ptr<BrowserView> browser_view_;
+   base::RepeatingClosure dismiss_;
+   CommandBarMode mode_ = CommandBarMode::kCurrentTab;
++  // In kSplit mode, the empty pane results open in, and whether one did.
++  base::WeakPtr<tabs::TabInterface> split_pane_;
++  bool opened_ = false;
+ 
+   std::unique_ptr<AutocompleteController> autocomplete_controller_;
+   FaviconCache favicon_cache_;
+--- a/chrome/browser/ui/views/leto/sidebar_header_view.cc
++++ b/chrome/browser/ui/views/leto/sidebar_header_view.cc
+@@ -108,7 +108,9 @@ std::u16string SiteText(content::WebCont
+     }
+     return base::UTF8ToUTF16(host);
+   }
+-  if (url.is_empty() || url.host() == chrome::kChromeUINewTabHost) {
++  // A new split view's pane is blank until something is opened in it.
++  if (url.is_empty() || url.IsAboutBlank() ||
++      url.host() == chrome::kChromeUINewTabHost) {
+     return std::u16string();
+   }
+   const std::u16string& title = contents->GetTitle();
