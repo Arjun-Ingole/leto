@@ -1,0 +1,410 @@
+--- a/chrome/browser/ui/views/leto/space_bar_view.cc
++++ b/chrome/browser/ui/views/leto/space_bar_view.cc
+@@ -4,20 +4,29 @@
+ 
+ #include "chrome/browser/ui/views/leto/space_bar_view.h"
+ 
++#include <algorithm>
+ #include <memory>
++#include <string>
++#include <vector>
+ 
+ #include "base/files/file_path.h"
+ #include "base/functional/bind.h"
+ #include "base/memory/weak_ptr.h"
++#include "base/strings/string_number_conversions.h"
++#include "chrome/app/vector_icons/vector_icons.h"
+ #include "chrome/browser/browser_process.h"
+ #include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/profiles/profile_attributes_entry.h"
+ #include "chrome/browser/profiles/profile_avatar_icon_util.h"
+ #include "chrome/browser/profiles/profile_manager.h"
+ #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/chrome_pages.h"
+ #include "chrome/browser/ui/color/chrome_color_id.h"
+ #include "chrome/browser/ui/profiles/profile_colors_util.h"
++#include "chrome/browser/ui/profiles/profile_picker.h"
+ #include "chrome/browser/ui/views/leto/space_switcher.h"
++#include "chrome/browser/ui/views/toolbar/toolbar_ink_drop_util.h"
++#include "chrome/common/webui_url_constants.h"
+ #include "ui/base/metadata/metadata_header_macros.h"
+ #include "ui/base/metadata/metadata_impl_macros.h"
+ #include "ui/base/models/image_model.h"
+@@ -28,12 +37,21 @@
+ #include "ui/views/accessibility/view_accessibility.h"
+ #include "ui/views/border.h"
+ #include "ui/views/controls/button/image_button.h"
++#include "ui/views/controls/menu/menu_runner.h"
+ #include "ui/views/layout/box_layout.h"
++#include "ui/views/view_utils.h"
+ 
+ namespace leto {
+ 
+ namespace {
+ 
++// The commands of the menu shown on right-clicking the space bar.
++enum SpaceMenuCommand {
++  kEditSpace,
++  kNewSpace,
++  kManageSpaces,
++};
++
+ // A space's button. Hovering it opens the space ahead of time, so that
+ // clicking switches as quickly as to a space visited before.
+ class SpaceButton : public views::ImageButton {
+@@ -55,6 +73,8 @@ class SpaceButton : public views::ImageB
+     }
+   }
+ 
++  const base::FilePath& profile_path() const { return profile_path_; }
++
+  private:
+   const base::FilePath profile_path_;
+   const bool is_current_;
+@@ -73,6 +93,45 @@ ProfileAttributesStorage& GetStorage() {
+   return g_browser_process->profile_manager()->GetProfileAttributesStorage();
+ }
+ 
++// Opens the settings of the space at `profile_path`, where its name and icon
++// are edited, switching to it first if it is another space.
++void EditSpace(BrowserWindowInterface* browser,
++               const base::FilePath& profile_path) {
++  SwitchToSpace(
++      browser, profile_path, base::BindOnce([](BrowserWindowInterface* space) {
++        chrome::ShowSettingsSubPage(space, chrome::kManageProfileSubPage);
++      }));
++}
++
++// Adds a space with the next free "Space N" name and an unused icon, switches
++// to it and opens its settings, so it can be named right away.
++void CreateNewSpace(BrowserWindowInterface* browser) {
++  ProfileAttributesStorage& storage = GetStorage();
++  std::u16string name;
++  for (size_t number = storage.GetNumberOfProfiles() + 1;; ++number) {
++    name = u"Space " + base::NumberToString16(number);
++    const std::vector<ProfileAttributesEntry*> entries =
++        storage.GetAllProfilesAttributes();
++    if (std::ranges::none_of(entries, [&](const ProfileAttributesEntry* entry) {
++          return entry->GetLocalProfileName() == name;
++        })) {
++      break;
++    }
++  }
++
++  ProfileManager::CreateMultiProfileAsync(
++      name, storage.ChooseAvatarIconIndexForNewProfile(),
++      /*is_hidden=*/false,
++      base::BindOnce(
++          [](base::WeakPtr<BrowserWindowInterface> browser, Profile* profile) {
++            if (!browser || !profile) {
++              return;
++            }
++            EditSpace(browser.get(), profile->GetPath());
++          },
++          browser->GetWeakPtr()));
++}
++
+ }  // namespace
+ 
+ SpaceBarView::SpaceBarView(BrowserWindowInterface* browser)
+@@ -81,6 +140,7 @@ SpaceBarView::SpaceBarView(BrowserWindow
+       views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), kSpacing));
+   layout->set_cross_axis_alignment(
+       views::BoxLayout::CrossAxisAlignment::kCenter);
++  set_context_menu_controller(this);
+   storage_observation_.Observe(&GetStorage());
+ }
+ 
+@@ -91,6 +151,45 @@ void SpaceBarView::OnThemeChanged() {
+   Rebuild();
+ }
+ 
++void SpaceBarView::ShowContextMenuForViewImpl(
++    views::View* source,
++    const gfx::Point& point,
++    ui::mojom::MenuSourceType source_type) {
++  auto* button = views::AsViewClass<SpaceButton>(source);
++  menu_space_path_ = button ? button->profile_path() : base::FilePath();
++
++  menu_model_ = std::make_unique<ui::SimpleMenuModel>(this);
++  if (button) {
++    menu_model_->AddItem(kEditSpace, u"Edit Space\u2026");
++    menu_model_->AddSeparator(ui::NORMAL_SEPARATOR);
++  }
++  menu_model_->AddItem(kNewSpace, u"New Space");
++  menu_model_->AddItem(kManageSpaces, u"Manage Spaces\u2026");
++
++  menu_runner_ = std::make_unique<views::MenuRunner>(
++      menu_model_.get(),
++      views::MenuRunner::HAS_MNEMONICS | views::MenuRunner::CONTEXT_MENU);
++  menu_runner_->RunMenuAt(GetWidget(), nullptr, gfx::Rect(point, gfx::Size()),
++                          views::MenuAnchorPosition::kTopLeft, source_type);
++}
++
++void SpaceBarView::ExecuteCommand(int command_id, int event_flags) {
++  switch (command_id) {
++    case kEditSpace:
++      if (!menu_space_path_.empty()) {
++        EditSpace(browser_, menu_space_path_);
++      }
++      break;
++    case kNewSpace:
++      CreateNewSpace(browser_);
++      break;
++    case kManageSpaces:
++      ProfilePicker::Show(ProfilePicker::Params::FromEntryPoint(
++          ProfilePicker::EntryPoint::kProfileMenuManageProfiles));
++      break;
++  }
++}
++
+ void SpaceBarView::OnProfileAdded(const base::FilePath&) {
+   Rebuild();
+ }
+@@ -150,6 +249,7 @@ void SpaceBarView::Rebuild() {
+             },
+             browser_->GetWeakPtr(), profile_path),
+         profile_path, profile_path == current_path);
++    button->set_context_menu_controller(this);
+ 
+     button->SetImageModel(
+         views::Button::STATE_NORMAL,
+@@ -181,4 +281,26 @@ void SpaceBarView::Rebuild() {
+ BEGIN_METADATA(SpaceBarView)
+ END_METADATA
+ 
++std::unique_ptr<views::View> CreateNewSpaceButton(
++    BrowserWindowInterface* browser) {
++  constexpr int kButtonSize = 24;
++  auto button = std::make_unique<views::ImageButton>(base::BindRepeating(
++      [](base::WeakPtr<BrowserWindowInterface> browser) {
++        if (browser) {
++          CreateNewSpace(browser.get());
++        }
++      },
++      browser->GetWeakPtr()));
++  button->SetImageModel(views::Button::STATE_NORMAL,
++                        ui::ImageModel::FromVectorIcon(
++                            kAddIcon, kColorToolbarButtonIcon, kIconSize));
++  button->SetImageHorizontalAlignment(views::ImageButton::ALIGN_CENTER);
++  button->SetImageVerticalAlignment(views::ImageButton::ALIGN_MIDDLE);
++  button->SetPreferredSize(gfx::Size(kButtonSize, kButtonSize));
++  button->SetTooltipText(u"New Space");
++  button->GetViewAccessibility().SetName(u"New Space");
++  ConfigureInkDrop(button.get());
++  return button;
++}
++
+ }  // namespace leto
+--- a/chrome/browser/ui/views/leto/space_bar_view.h
++++ b/chrome/browser/ui/views/leto/space_bar_view.h
+@@ -5,26 +5,32 @@
+ #ifndef CHROME_BROWSER_UI_VIEWS_LETO_SPACE_BAR_VIEW_H_
+ #define CHROME_BROWSER_UI_VIEWS_LETO_SPACE_BAR_VIEW_H_
+ 
++#include <memory>
+ #include <string>
+ 
++#include "base/files/file_path.h"
+ #include "base/memory/raw_ptr.h"
+ #include "base/scoped_observation.h"
+ #include "chrome/browser/profiles/profile_attributes_storage.h"
+ #include "chrome/browser/profiles/profile_attributes_storage_observer.h"
+ #include "ui/base/metadata/metadata_header_macros.h"
++#include "ui/menus/simple_menu_model.h"
++#include "ui/views/context_menu_controller.h"
+ #include "ui/views/view.h"
+ 
+ class BrowserWindowInterface;
+ 
+-namespace base {
+-class FilePath;
+-}  // namespace base
++namespace views {
++class MenuRunner;
++}  // namespace views
+ 
+ namespace leto {
+ 
+ // A row of space icons for the bottom of the vertical tab strip. The space of
+ // this window is highlighted, and clicking another one switches to it.
+ class SpaceBarView : public views::View,
++                     public views::ContextMenuController,
++                     public ui::SimpleMenuModel::Delegate,
+                      public ProfileAttributesStorage::Observer {
+   METADATA_HEADER(SpaceBarView, views::View)
+ 
+@@ -37,6 +43,15 @@ class SpaceBarView : public views::View,
+   // views::View:
+   void OnThemeChanged() override;
+ 
++  // views::ContextMenuController:
++  void ShowContextMenuForViewImpl(
++      views::View* source,
++      const gfx::Point& point,
++      ui::mojom::MenuSourceType source_type) override;
++
++  // ui::SimpleMenuModel::Delegate:
++  void ExecuteCommand(int command_id, int event_flags) override;
++
+   // ProfileAttributesStorage::Observer:
+   void OnProfileAdded(const base::FilePath& profile_path) override;
+   void OnProfileWasRemoved(const base::FilePath& profile_path,
+@@ -52,11 +67,19 @@ class SpaceBarView : public views::View,
+   void Rebuild();
+ 
+   raw_ptr<BrowserWindowInterface> browser_;
++  // The space whose button was right-clicked, if one was.
++  base::FilePath menu_space_path_;
++  std::unique_ptr<ui::SimpleMenuModel> menu_model_;
++  std::unique_ptr<views::MenuRunner> menu_runner_;
+   base::ScopedObservation<ProfileAttributesStorage,
+                           ProfileAttributesStorage::Observer>
+       storage_observation_{this};
+ };
+ 
++// A button that adds a new space and switches to it.
++std::unique_ptr<views::View> CreateNewSpaceButton(
++    BrowserWindowInterface* browser);
++
+ }  // namespace leto
+ 
+ #endif  // CHROME_BROWSER_UI_VIEWS_LETO_SPACE_BAR_VIEW_H_
+--- a/chrome/browser/ui/views/leto/space_switcher.cc
++++ b/chrome/browser/ui/views/leto/space_switcher.cc
+@@ -6,6 +6,7 @@
+ 
+ #include <algorithm>
+ #include <map>
++#include <utility>
+ #include <vector>
+ 
+ #include "base/files/file_path.h"
+@@ -117,6 +118,18 @@ void PresentInPlace(base::WeakPtr<Browse
+           source));
+ }
+ 
++// Presents `target` as PresentInPlace() does, then runs `on_shown` with it.
++void PresentInPlaceAndNotify(
++    base::WeakPtr<BrowserWindowInterface> source,
++    const gfx::Rect& bounds,
++    base::OnceCallback<void(BrowserWindowInterface*)> on_shown,
++    BrowserWindowInterface* target) {
++  PresentInPlace(source, bounds, target);
++  if (target && on_shown) {
++    std::move(on_shown).Run(target);
++  }
++}
++
+ void OnPrewarmed(const base::FilePath& profile_path,
+                  BrowserWindowInterface* browser) {
+   auto it = Prewarms().find(profile_path);
+@@ -135,9 +148,11 @@ void OnPrewarmed(const base::FilePath& p
+   }
+ }
+ 
+-void OnTargetProfileLoaded(base::WeakPtr<BrowserWindowInterface> source,
+-                           const gfx::Rect& bounds,
+-                           Profile* profile) {
++void OnTargetProfileLoaded(
++    base::WeakPtr<BrowserWindowInterface> source,
++    const gfx::Rect& bounds,
++    base::OnceCallback<void(BrowserWindowInterface*)> on_shown,
++    Profile* profile) {
+   if (!profile) {
+     return;
+   }
+@@ -146,8 +161,8 @@ void OnTargetProfileLoaded(base::WeakPtr
+   // rather than opening a second window.
+   if (auto it = Prewarms().find(profile->GetPath());
+       it != Prewarms().end() && !it->second.ready) {
+-    it->second.waiters.push_back(
+-        base::BindOnce(&PresentInPlace, source, bounds));
++    it->second.waiters.push_back(base::BindOnce(
++        &PresentInPlaceAndNotify, source, bounds, std::move(on_shown)));
+     return;
+   }
+ 
+@@ -156,12 +171,13 @@ void OnTargetProfileLoaded(base::WeakPtr
+   if (BrowserWindowInterface* existing =
+           ProfileBrowserCollection::GetForProfile(profile)
+               ->FindTabbedBrowser()) {
+-    PresentInPlace(source, bounds, existing);
++    PresentInPlaceAndNotify(source, bounds, std::move(on_shown), existing);
+     return;
+   }
+ 
+   profiles::OpenBrowserWindowForProfile(
+-      base::BindOnce(&PresentInPlace, source, bounds),
++      base::BindOnce(&PresentInPlaceAndNotify, source, bounds,
++                     std::move(on_shown)),
+       /*always_create=*/false, /*is_new_profile=*/false,
+       /*open_command_line_urls=*/false, profile);
+ }
+@@ -276,10 +292,16 @@ bool ShowSpace(BrowserWindowInterface* b
+ }
+ 
+ void SwitchToSpace(BrowserWindowInterface* current,
+-                   const base::FilePath& profile_path) {
++                   const base::FilePath& profile_path,
++                   base::OnceCallback<void(BrowserWindowInterface*)> on_shown) {
+   Profile* profile = current->GetProfile();
+-  if (profile->IsOffTheRecord() || profile->IsGuestSession() ||
+-      profile->GetPath() == profile_path) {
++  if (profile->GetPath() == profile_path && !profile->IsOffTheRecord()) {
++    if (on_shown) {
++      std::move(on_shown).Run(current);
++    }
++    return;
++  }
++  if (profile->IsOffTheRecord() || profile->IsGuestSession()) {
+     return;
+   }
+ 
+@@ -289,8 +311,9 @@ void SwitchToSpace(BrowserWindowInterfac
+   }
+ 
+   profiles::LoadProfileAsync(
+-      profile_path, base::BindOnce(&OnTargetProfileLoaded,
+-                                   current->GetWeakPtr(), window->GetBounds()));
++      profile_path,
++      base::BindOnce(&OnTargetProfileLoaded, current->GetWeakPtr(),
++                     window->GetBounds(), std::move(on_shown)));
+ }
+ 
+ }  // namespace leto
+--- a/chrome/browser/ui/views/leto/space_switcher.h
++++ b/chrome/browser/ui/views/leto/space_switcher.h
+@@ -5,6 +5,8 @@
+ #ifndef CHROME_BROWSER_UI_VIEWS_LETO_SPACE_SWITCHER_H_
+ #define CHROME_BROWSER_UI_VIEWS_LETO_SPACE_SWITCHER_H_
+ 
++#include "base/functional/callback.h"
++
+ class BrowserWindowInterface;
+ 
+ namespace base {
+@@ -22,8 +24,11 @@ namespace leto {
+ void SwitchSpace(BrowserWindowInterface* current, int delta);
+ 
+ // Switches `current` to the space of the profile at `profile_path`.
+-void SwitchToSpace(BrowserWindowInterface* current,
+-                   const base::FilePath& profile_path);
++// `on_shown`, if set, runs with the space's window once it is on screen.
++void SwitchToSpace(
++    BrowserWindowInterface* current,
++    const base::FilePath& profile_path,
++    base::OnceCallback<void(BrowserWindowInterface*)> on_shown = {});
+ 
+ // Opens the space of the profile at `profile_path` ahead of time without
+ // showing it, so that switching to it later is as quick as switching to a space
+--- a/chrome/browser/ui/views/tabs/vertical/vertical_tab_strip_bottom_container.cc
++++ b/chrome/browser/ui/views/tabs/vertical/vertical_tab_strip_bottom_container.cc
+@@ -102,6 +102,7 @@ VerticalTabStripBottomContainer::Vertica
+   trailing_slot_ = footer_->AddChildView(std::make_unique<views::View>());
+   trailing_slot_->SetUseDefaultFillLayout(true);
+   trailing_slot_->SetPreferredSize(gfx::Size(kFooterSlotSize, kFooterSlotSize));
++  trailing_slot_->AddChildView(leto::CreateNewSpaceButton(browser_));
+ #endif
+ 
+   OnCollapseStateChanged(state_controller->GetCollapseState());
