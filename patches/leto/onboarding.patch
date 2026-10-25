@@ -1,0 +1,2159 @@
+--- a/chrome/browser/ui/views/leto/global_appearance.cc
++++ b/chrome/browser/ui/views/leto/global_appearance.cc
+@@ -44,6 +44,17 @@ constexpr auto kSharedPrefs = std::to_ar
+     "helium.browser.show_progress_bar",
+     // Tabs.
+     "leto.archive_tabs_after_hours",
++    // Onboarding runs once, not again for every new space, and the choices
++    // made there about Helium's services hold for every space.
++    "helium.completed_onboarding",
++    "helium.services.enabled",
++    "helium.services.user_consented",
++    "helium.services.ext_proxy",
++    "helium.services.bangs",
++    "helium.services.ublock_assets",
++    "helium.services.browser_updates",
++    "helium.services.spellcheck_files",
++    "helium.services.origin_override",
+     // Toolbar buttons.
+     "browser.show_home_button",
+     "browser.show_forward_button",
+--- a/components/helium_onboarding/index.html
++++ b/components/helium_onboarding/index.html
+@@ -3,7 +3,7 @@
+ 
+ <head>
+     <meta charset="UTF-8" />
+-    <link rel="icon" type="image/png" href="/favicon.png" />
++    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+     <title>Helium Setup</title>
+ </head>
+--- /dev/null
++++ b/components/helium_onboarding/public/favicon.svg
+@@ -0,0 +1 @@
++<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="b" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0f0f12"/><stop offset="1" stop-color="#4b4b55"/></linearGradient><linearGradient id="m" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#c9c9d4"/></linearGradient></defs><rect width="256" height="256" rx="67" fill="url(#b)"/><path d="M123.12 64.83A63.36 63.36 0 1 0 188.8 145.83A52.22 52.22 0 1 1 123.12 64.83Z" fill="url(#m)"/></svg>
+--- a/components/helium_onboarding/src/App.svelte
++++ b/components/helium_onboarding/src/App.svelte
+@@ -1,7 +1,6 @@
+ <script lang="ts">
+     import { onMount } from "svelte";
+     import { SvelteSet } from "svelte/reactivity";
+-    import { GradientShimmer } from "@imput/helium-prism";
+     import * as pages from "./pages";
+     import * as Browser from "./lib/browser";
+     import {
+@@ -12,6 +11,8 @@
+     } from "./lib/onboarding-flow";
+ 
+     import PageNavigation from "./components/PageNavigation.svelte";
++    import LetoBackdrop from "./components/LetoBackdrop.svelte";
++    import StepDots from "./components/StepDots.svelte";
+ 
+     const OUT_ANIMATION_DURATION = 200;
+ 
+@@ -70,11 +71,11 @@
+     style:--onboarding-intro-delay={`${ONBOARDING_INTRO_DELAY_MS}ms`}
+ >
+     {#if introStarted}
+-        <div class="shimmer-layer" class:dimmed={shimmerDimmed}>
+-            <GradientShimmer bind:this={gradientShimmer} />
+-        </div>
++        <LetoBackdrop bind:this={gradientShimmer} dimmed={shimmerDimmed} />
+     {/if}
+ 
++    <StepDots />
++
+     <!-- Keep navigation mounted on Finish so it can animate out. -->
+     {#if $currentPage !== "Welcome"}
+         <PageNavigation />
+@@ -113,26 +114,10 @@
+         }
+     }
+ 
+-    .shimmer-layer {
+-        position: fixed;
+-        inset: 0;
+-        z-index: 0;
+-        opacity: 1;
+-        pointer-events: none;
+-        transition: opacity 1s;
+-
+-        &.dimmed {
+-            opacity: 0.5;
+-        }
+-    }
+-
+     @media (prefers-color-scheme: dark) {
+         main.dimmed::before {
+             opacity: 1;
+         }
+ 
+-        .shimmer-layer.dimmed {
+-            opacity: 0.3;
+-        }
+     }
+ </style>
+--- a/components/helium_onboarding/src/app.css
++++ b/components/helium_onboarding/src/app.css
+@@ -1,3 +1,96 @@
++/* Leto's look: graphite and moonlight, in the system's fonts. These tokens
++ * take the place of Helium Prism's blues, so its components follow along. */
++:root {
++    --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue",
++        system-ui, sans-serif;
++    --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display",
++        "Helvetica Neue", system-ui, sans-serif;
++    --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
++    --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
++
++    --primary: #17171b;
++    --secondary: #5f5f69;
++    --tertiary: #8b8b95;
++
++    /* The accent is ink on paper here and moonlight on graphite in the dark.
++     * --white is whatever sits on top of it. */
++    --helium-blue: #18181c;
++    --helium-blue-hover: #2b2b31;
++    --helium-blue-press: #000000;
++    --white: #ffffff;
++
++    --bg-surface: #f6f6f4;
++    --bg-gradient-start: #f8f8f6;
++    --bg-gradient-end: #e7e7ec;
++    --intro-gradient-start: #f8f8f6;
++    --intro-gradient-end: #f8f8f6;
++
++    --helium-elevated: #1a1a20;
++    --tooltip-bg: #ffffff;
++    --tooltip-shadow: rgba(20, 20, 26, 0.16);
++
++    --card-surface: rgba(255, 255, 255, 0.82);
++    --card-border: rgba(20, 20, 26, 0.07);
++    --card-shadow: 0 1px 2px rgba(20, 20, 26, 0.04),
++        0 8px 24px rgba(20, 20, 26, 0.06);
++    --glow: rgba(255, 255, 255, 0.9);
++    --grain-opacity: 0.06;
++
++    --mid-border-radius: 10px;
++    --card-border-radius: 16px;
++    /* No backdrop blur: it would repaint every frame over the moving glow. */
++    --glass-filter: none;
++
++    font-family: var(--font);
++    font-weight: 400;
++    letter-spacing: -0.005em;
++}
++
++@media (prefers-color-scheme: dark) {
++    :root {
++        --primary: #f2f2f5;
++        --secondary: #a2a2ad;
++        --tertiary: #72727c;
++
++        --helium-blue: #f2f2f5;
++        --helium-blue-hover: #ffffff;
++        --helium-blue-press: #d9d9df;
++        --white: #141418;
++
++        --bg-surface: #0e0e11;
++        --bg-gradient-start: #101014;
++        --bg-gradient-end: #24242b;
++        --intro-gradient-start: #101014;
++        --intro-gradient-end: #101014;
++
++        --helium-elevated: #ffffff;
++        --tooltip-bg: #26262c;
++        --tooltip-shadow: rgba(0, 0, 0, 0.5);
++
++        --card-surface: rgba(30, 30, 36, 0.72);
++        --card-border: rgba(255, 255, 255, 0.07);
++        --card-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset,
++            0 12px 32px rgba(0, 0, 0, 0.32);
++        --glow: rgba(196, 198, 232, 0.16);
++        --grain-opacity: 0.1;
++    }
++}
++
++h1, h2, h3 {
++    font-family: var(--font-display);
++    font-weight: 600;
++    letter-spacing: -0.022em;
++}
++
++h4 {
++    font-weight: 600;
++    letter-spacing: -0.01em;
++}
++
++p {
++    line-height: 1.4;
++}
++
+ :root {
+     --page-scroll-gradient-mask: linear-gradient(
+         to bottom,
+@@ -25,11 +118,11 @@ h1, h2, p {
+ }
+ 
+ h1 {
+-    font-size: 38px;
++    font-size: 44px;
+ }
+ 
+ h2 {
+-    font-size: 30px;
++    font-size: 32px;
+ }
+ 
+ .onboarding-page {
+@@ -47,13 +140,13 @@ h2 {
+ 
+ .onboarding-page.visible {
+     visibility: visible;
+-    animation: page-in 0.3s;
++    animation: page-in 0.6s var(--ease-out);
+     animation-delay: var(--page-in-delay, 0.05s);
+     animation-fill-mode: backwards;
+ }
+ 
+ .onboarding-page:not(.visible) {
+-    animation: page-out 0.2s;
++    animation: page-out 0.22s var(--ease-in-out);
+     animation-fill-mode: forwards;
+ }
+ 
+@@ -80,10 +173,7 @@ h2 {
+ 
+ @keyframes page-in {
+     from {
+-        translate: 0 40px;
+-        opacity: 0;
+-    }
+-    10% {
++        translate: 0 18px;
+         opacity: 0;
+     }
+     to {
+@@ -96,13 +186,10 @@ h2 {
+         opacity: 1;
+         visibility: visible;
+     }
+-    90% {
+-        opacity: 0;
+-    }
+     to {
+         opacity: 0;
+         visibility: hidden;
+-        translate: 0 -40px;
++        translate: 0 -10px;
+     }
+ }
+ 
+@@ -155,3 +242,34 @@ h2 {
+         justify-content: center;
+     }
+ }
++
++/* Leto: cards are frosted panels on the backdrop. */
++.leto-card {
++    background: var(--card-surface);
++    border: 1px solid var(--card-border);
++    border-radius: var(--card-border-radius);
++    box-shadow: var(--card-shadow);
++    backdrop-filter: var(--glass-filter);
++}
++
++/* Keyboard shortcuts, drawn as small keycaps. */
++.keys {
++    display: inline-flex;
++    gap: 3px;
++}
++
++.keys kbd {
++    display: inline-flex;
++    align-items: center;
++    justify-content: center;
++    min-width: 22px;
++    height: 22px;
++    padding: 0 6px;
++    border-radius: 6px;
++    font-family: var(--font);
++    font-size: 12px;
++    font-weight: 500;
++    color: var(--primary);
++    background: var(--helium-elevated-7);
++    box-shadow: inset 0 -1px 0 var(--helium-elevated-10);
++}
+--- /dev/null
++++ b/components/helium_onboarding/src/assets/leto-icon.svg
+@@ -0,0 +1,62 @@
++<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
++  <defs>
++    <path id="sq" transform="translate(100 100) scale(0.8046875)" d="M1024.0 512.0 L1023.9 631.2 L1023.7 669.3 L1023.4 697.0 L1022.9 719.5 L1022.2 738.8 L1021.5 755.8 L1020.6 771.1 L1019.5 785.2 L1018.3 798.1 L1016.9 810.2 L1015.5 821.5 L1013.8 832.1 L1012.0 842.1 L1010.1 851.6 L1008.0 860.7 L1005.8 869.3 L1003.4 877.5 L1000.9 885.3 L998.2 892.8 L995.4 900.0 L992.4 906.9 L989.2 913.5 L985.9 919.9 L982.4 926.0 L978.7 931.8 L974.9 937.4 L970.9 942.8 L966.7 948.0 L962.3 953.0 L957.7 957.7 L953.0 962.3 L948.0 966.7 L942.8 970.9 L937.4 974.9 L931.8 978.7 L926.0 982.4 L919.9 985.9 L913.5 989.2 L906.9 992.4 L900.0 995.4 L892.8 998.2 L885.3 1000.9 L877.5 1003.4 L869.3 1005.8 L860.7 1008.0 L851.6 1010.1 L842.1 1012.0 L832.1 1013.8 L821.5 1015.5 L810.2 1016.9 L798.1 1018.3 L785.2 1019.5 L771.1 1020.6 L755.8 1021.5 L738.8 1022.2 L719.5 1022.9 L697.0 1023.4 L669.3 1023.7 L631.2 1023.9 L512.0 1024.0 L392.8 1023.9 L354.7 1023.7 L327.0 1023.4 L304.5 1022.9 L285.2 1022.2 L268.2 1021.5 L252.9 1020.6 L238.8 1019.5 L225.9 1018.3 L213.8 1016.9 L202.5 1015.5 L191.9 1013.8 L181.9 1012.0 L172.4 1010.1 L163.3 1008.0 L154.7 1005.8 L146.5 1003.4 L138.7 1000.9 L131.2 998.2 L124.0 995.4 L117.1 992.4 L110.5 989.2 L104.1 985.9 L98.0 982.4 L92.2 978.7 L86.6 974.9 L81.2 970.9 L76.0 966.7 L71.0 962.3 L66.3 957.7 L61.7 953.0 L57.3 948.0 L53.1 942.8 L49.1 937.4 L45.3 931.8 L41.6 926.0 L38.1 919.9 L34.8 913.5 L31.6 906.9 L28.6 900.0 L25.8 892.8 L23.1 885.3 L20.6 877.5 L18.2 869.3 L16.0 860.7 L13.9 851.6 L12.0 842.1 L10.2 832.1 L8.5 821.5 L7.1 810.2 L5.7 798.1 L4.5 785.2 L3.4 771.1 L2.5 755.8 L1.8 738.8 L1.1 719.5 L0.6 697.0 L0.3 669.3 L0.1 631.2 L0.0 512.0 L0.1 392.8 L0.3 354.7 L0.6 327.0 L1.1 304.5 L1.8 285.2 L2.5 268.2 L3.4 252.9 L4.5 238.8 L5.7 225.9 L7.1 213.8 L8.5 202.5 L10.2 191.9 L12.0 181.9 L13.9 172.4 L16.0 163.3 L18.2 154.7 L20.6 146.5 L23.1 138.7 L25.8 131.2 L28.6 124.0 L31.6 117.1 L34.8 110.5 L38.1 104.1 L41.6 98.0 L45.3 92.2 L49.1 86.6 L53.1 81.2 L57.3 76.0 L61.7 71.0 L66.3 66.3 L71.0 61.7 L76.0 57.3 L81.2 53.1 L86.6 49.1 L92.2 45.3 L98.0 41.6 L104.1 38.1 L110.5 34.8 L117.1 31.6 L124.0 28.6 L131.2 25.8 L138.7 23.1 L146.5 20.6 L154.7 18.2 L163.3 16.0 L172.4 13.9 L181.9 12.0 L191.9 10.2 L202.5 8.5 L213.8 7.1 L225.9 5.7 L238.8 4.5 L252.9 3.4 L268.2 2.5 L285.2 1.8 L304.5 1.1 L327.0 0.6 L354.7 0.3 L392.8 0.1 L512.0 0.0 L631.2 0.1 L669.3 0.3 L697.0 0.6 L719.5 1.1 L738.8 1.8 L755.8 2.5 L771.1 3.4 L785.2 4.5 L798.1 5.7 L810.2 7.1 L821.5 8.5 L832.1 10.2 L842.1 12.0 L851.6 13.9 L860.7 16.0 L869.3 18.2 L877.5 20.6 L885.3 23.1 L892.8 25.8 L900.0 28.6 L906.9 31.6 L913.5 34.8 L919.9 38.1 L926.0 41.6 L931.8 45.3 L937.4 49.1 L942.8 53.1 L948.0 57.3 L953.0 61.7 L957.7 66.3 L962.3 71.0 L966.7 76.0 L970.9 81.2 L974.9 86.6 L978.7 92.2 L982.4 98.0 L985.9 104.1 L989.2 110.5 L992.4 117.1 L995.4 124.0 L998.2 131.2 L1000.9 138.7 L1003.4 146.5 L1005.8 154.7 L1008.0 163.3 L1010.1 172.4 L1012.0 181.9 L1013.8 191.9 L1015.5 202.5 L1016.9 213.8 L1018.3 225.9 L1019.5 238.8 L1020.6 252.9 L1021.5 268.2 L1022.2 285.2 L1022.9 304.5 L1023.4 327.0 L1023.7 354.7 L1023.9 392.8Z"/>
++    <clipPath id="sqc"><use href="#sq"/></clipPath>
++    <path id="mark" d="M496.3 308.77A203.84 203.84 0 1 0 707.6 569.37A168 168 0 1 1 496.3 308.77Z"/>
++    <mask id="mm"><use href="#mark" fill="#fff"/></mask>
++    <filter id="icon-shadow" filterUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
++      <feGaussianBlur in="SourceAlpha" stdDeviation="18"/><feOffset dy="14"/>
++      <feComponentTransfer><feFuncA type="linear" slope=".5"/></feComponentTransfer>
++      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
++    </filter>
++    <filter id="mark-shadow" filterUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
++      <feGaussianBlur in="SourceAlpha" stdDeviation="8"/><feOffset dy="6"/>
++      <feComponentTransfer><feFuncA type="linear" slope=".28"/></feComponentTransfer>
++      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
++    </filter>
++    <filter id="glow" filterUnits="userSpaceOnUse" x="-200" y="-200" width="1424" height="1424">
++      <feGaussianBlur stdDeviation="44"/>
++    </filter>
++    <filter id="grain" filterUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
++      <feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" seed="7" stitchTiles="stitch"/>
++      <feColorMatrix type="saturate" values="0"/>
++      <feComponentTransfer>
++        <feFuncR type="linear" slope="1.6" intercept="-0.3"/>
++        <feFuncG type="linear" slope="1.6" intercept="-0.3"/>
++        <feFuncB type="linear" slope="1.6" intercept="-0.3"/>
++      </feComponentTransfer>
++    </filter>
++    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
++      <stop offset="0" stop-color="#0f0f12"/><stop offset="1" stop-color="#4b4b55"/>
++    </linearGradient>
++    <radialGradient id="sheen" cx=".3" cy=".18" r=".8">
++      <stop offset="0" stop-color="#fff" stop-opacity=".22"/><stop offset="1" stop-color="#fff" stop-opacity="0"/>
++    </radialGradient>
++    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
++      <stop offset="0" stop-color="#fff" stop-opacity=".5"/><stop offset=".25" stop-color="#fff" stop-opacity=".06"/>
++      <stop offset=".8" stop-color="#fff" stop-opacity=".08"/><stop offset="1" stop-color="#fff" stop-opacity=".35"/>
++    </linearGradient>
++    <linearGradient id="glass-body" x1="0" y1="0" x2="0" y2="1">
++      <stop offset="0" stop-color="#fff" stop-opacity=".9"/>
++      <stop offset=".55" stop-color="#b8b8c8" stop-opacity=".55"/>
++      <stop offset="1" stop-color="#b8b8c8" stop-opacity=".42"/>
++    </linearGradient>
++    <linearGradient id="glass-rim" x1="0" y1="0" x2="0" y2="1">
++      <stop offset="0" stop-color="#fff" stop-opacity="1"/><stop offset=".45" stop-color="#fff" stop-opacity=".35"/>
++      <stop offset="1" stop-color="#fff" stop-opacity=".85"/>
++    </linearGradient>
++    <linearGradient id="glass-sheen" x1="0" y1="0" x2="0" y2="1">
++      <stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset="1" stop-color="#fff" stop-opacity="0"/>
++    </linearGradient>
++  </defs>
++  <g filter="url(#icon-shadow)"><use href="#sq" fill="url(#bg)"/></g>
++  <g clip-path="url(#sqc)">
++    <rect width="1024" height="1024" fill="url(#sheen)"/>
++    <use href="#mark" fill="#b8b8c8" opacity=".95" filter="url(#glow)"/>
++    <g filter="url(#mark-shadow)" opacity=".98"><use href="#mark" fill="url(#glass-body)"/></g>
++    <g mask="url(#mm)"><use href="#mark" fill="none" stroke="url(#glass-rim)" stroke-width="10"/></g>
++    <g mask="url(#mm)"><rect width="1024" height="560" fill="url(#glass-sheen)"/></g>
++    <rect width="1024" height="1024" filter="url(#grain)" opacity=".16" style="mix-blend-mode:overlay"/>
++  </g>
++  <use href="#sq" fill="none" stroke="url(#rim)" stroke-width="4" clip-path="url(#sqc)"/>
++</svg>
+--- a/components/helium_onboarding/src/components/BrowserImportGraphic.svelte
++++ b/components/helium_onboarding/src/components/BrowserImportGraphic.svelte
+@@ -1,16 +1,18 @@
+ <script lang="ts">
+     import { browserIcons } from "../lib/nonfree-icons";
+     import { platform } from "../lib/platform";
++    import letoIcon from "../assets/leto-icon.svg";
+ 
+     const { visible }: { visible: boolean } = $props();
+ 
++    // Leto: most people arrive from Arc, so it is always among the icons.
+     const browsers = [
++        "arc",
+         "firefox",
+         platform.is.macos ? "dia" : "zen",
+         "brave",
+         platform.is.macos ? "safari" : "vivaldi",
+         "chrome",
+-        "edge",
+     ];
+ 
+     for (let index = browsers.length - 1; index > 0; index--) {
+@@ -37,7 +39,7 @@
+     <div class="icon-stage">
+         <img
+             class="browser-icon helium-icon"
+-            src={browserIcons.helium}
++            src={letoIcon}
+             alt=""
+             draggable="false"
+         />
+--- a/components/helium_onboarding/src/components/ImportNotice.svelte
++++ b/components/helium_onboarding/src/components/ImportNotice.svelte
+@@ -17,7 +17,7 @@
+ <svelte:element
+     this={tag}
+     class={["import-notice", { dashed }]}
+-    {role}
++    role={role ?? (title ? "group" : undefined)}
+     aria-labelledby={title ? titleId : undefined}
+ >
+     {#if dashed}
+--- /dev/null
++++ b/components/helium_onboarding/src/components/LetoBackdrop.svelte
+@@ -0,0 +1,137 @@
++<script lang="ts">
++    // Leto's backdrop: graphite (or paper, in light mode) lit from above by a
++    // soft moonlight glow, under a fine film grain, like the app icon.
++
++    type Props = { dimmed?: boolean };
++    const { dimmed = false }: Props = $props();
++
++    let pulsing = $state(false);
++    let timer: number | undefined;
++
++    // Brightens the glow for a moment as the flow moves forward.
++    export const emphasize = () => {
++        pulsing = false;
++        window.clearTimeout(timer);
++        requestAnimationFrame(() => {
++            pulsing = true;
++            timer = window.setTimeout(() => (pulsing = false), 1400);
++        });
++    };
++
++    const grain =
++        "data:image/svg+xml;utf8," +
++        encodeURIComponent(
++            `<svg xmlns="http://www.w3.org/2000/svg" width="220" height="220">` +
++                `<filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch"/>` +
++                `<feColorMatrix type="saturate" values="0"/></filter>` +
++                `<rect width="100%" height="100%" filter="url(#n)"/></svg>`
++        );
++</script>
++
++<div class="backdrop" class:dimmed class:pulsing aria-hidden="true">
++    <div class="glow"></div>
++    <div class="glow secondary"></div>
++    <div class="grain" style:background-image={`url("${grain}")`}></div>
++</div>
++
++<style>
++    .backdrop {
++        position: fixed;
++        inset: 0;
++        z-index: 0;
++        overflow: hidden;
++        pointer-events: none;
++        background:
++            radial-gradient(
++                120% 80% at 50% 0% in oklab,
++                var(--bg-gradient-start) 0%,
++                var(--bg-surface) 60%
++            ),
++            linear-gradient(
++                180deg in oklab,
++                var(--bg-gradient-start),
++                var(--bg-gradient-end)
++            );
++        animation: backdrop-in 1.2s var(--ease-out) both;
++    }
++
++    /* The moonlight: a wide radial glow eased over many stops and mixed in
++       Oklab so it fades without banding, drawn once and only moved by the
++       compositor, never blurred or repainted. */
++    .glow {
++        position: absolute;
++        left: 50%;
++        top: -45vh;
++        width: 130vh;
++        height: 100vh;
++        margin-left: -65vh;
++        border-radius: 50%;
++        background: radial-gradient(
++            closest-side in oklab,
++            var(--glow) 0%,
++            color-mix(in oklab, var(--glow) 81%, transparent) 15%,
++            color-mix(in oklab, var(--glow) 62%, transparent) 28%,
++            color-mix(in oklab, var(--glow) 44%, transparent) 40%,
++            color-mix(in oklab, var(--glow) 28%, transparent) 52%,
++            color-mix(in oklab, var(--glow) 15%, transparent) 64%,
++            color-mix(in oklab, var(--glow) 6%, transparent) 77%,
++            color-mix(in oklab, var(--glow) 1.5%, transparent) 89%,
++            transparent 100%
++        );
++        opacity: 0.9;
++        will-change: transform, opacity;
++        transform: translate3d(0, 0, 0);
++        transition: opacity 1s var(--ease-out);
++        animation: drift 22s ease-in-out infinite alternate;
++
++        &.secondary {
++            top: auto;
++            bottom: -62vh;
++            width: 100vh;
++            margin-left: -50vh;
++            opacity: 0.35;
++            animation-duration: 28s;
++            animation-direction: alternate-reverse;
++        }
++    }
++
++    .dimmed .glow:not(.secondary) {
++        opacity: 0.55;
++    }
++
++    .pulsing .glow:not(.secondary) {
++        opacity: 1;
++    }
++
++    .grain {
++        position: absolute;
++        inset: -50%;
++        opacity: var(--grain-opacity);
++        mix-blend-mode: overlay;
++        will-change: transform;
++        background-size: 220px 220px;
++    }
++
++    @keyframes drift {
++        from {
++            transform: translate3d(-4vh, 0, 0);
++        }
++
++        to {
++            transform: translate3d(4vh, 3vh, 0);
++        }
++    }
++
++    @keyframes backdrop-in {
++        from {
++            opacity: 0;
++        }
++    }
++
++    @media (prefers-reduced-motion: reduce) {
++        .backdrop,
++        .glow {
++            animation: none;
++        }
++    }
++</style>
+--- /dev/null
++++ b/components/helium_onboarding/src/components/LetoIcon.svelte
+@@ -0,0 +1,40 @@
++<script lang="ts">
++    // Leto's app icon, the graphite moon, with moonlight behind it.
++    import icon from "../assets/leto-icon.svg";
++
++    type Props = { size?: number; glow?: boolean };
++    const { size = 96, glow = true }: Props = $props();
++</script>
++
++<div class="leto-icon" class:glow style:--size={`${size}px`}>
++    <img src={icon} alt="" width={size} height={size} draggable="false" />
++</div>
++
++<style>
++    .leto-icon {
++        position: relative;
++        display: flex;
++        width: var(--size);
++        height: var(--size);
++
++        & img {
++            position: relative;
++            width: 100%;
++            height: 100%;
++            /* The icon's artwork leaves room for its own shadow. */
++            scale: 1.22;
++        }
++
++        &.glow::before {
++            content: "";
++            position: absolute;
++            inset: -55%;
++            border-radius: 50%;
++            background: radial-gradient(
++                closest-side,
++                var(--glow),
++                transparent
++            );
++        }
++    }
++</style>
+--- a/components/helium_onboarding/src/components/PageHeader.svelte
++++ b/components/helium_onboarding/src/components/PageHeader.svelte
+@@ -21,68 +21,58 @@
+ </script>
+ 
+ <div class="page-header" class:no-top-margin={noTopMargin}>
+-    <div class="title" class:vertical={verticalTitle}>
+-        <div class="header-icon">
+-            {#if iconHeight}
+-                <Icon height={iconHeight} />
+-            {:else}
+-                <Icon />
+-            {/if}
+-        </div>
+-        <h2>{title}</h2>
++    <div class="header-icon" class:large={verticalTitle} aria-hidden="true">
++        {#if iconHeight}
++            <Icon height={iconHeight} />
++        {:else}
++            <Icon />
++        {/if}
+     </div>
++    <h2>{title}</h2>
+     <p>{subtitle}</p>
+ </div>
+ 
+ <style>
++    /* Leto: the icon sits in a small frosted tile above the title. */
+     .page-header {
+         display: flex;
+         align-items: center;
+         flex-direction: column;
+-        gap: var(--gap-2);
+-        margin-top: 48px;
++        gap: 10px;
++        margin-top: 72px;
+ 
+         &.no-top-margin {
+             margin-top: 0;
+         }
+ 
++        & h2 {
++            margin-top: 8px;
++        }
++
+         & p {
+-            font-size: 18px;
+-            max-width: 450px;
++            font-size: 17px;
++            line-height: 1.45;
++            max-width: 460px;
+             text-wrap: pretty;
+         }
++    }
+ 
+-        & .title {
+-            display: flex;
+-            align-items: center;
+-            flex-wrap: wrap;
+-            justify-content: center;
+-            gap: 10px;
+-
+-            & .header-icon {
+-                display: flex;
+-                height: 32px;
+-                width: 32px;
+-            }
+-
+-            & .header-icon :global(svg) {
+-                width: 100%;
+-                height: 100%;
+-                stroke-width: 2px;
+-            }
+-
+-            &.vertical {
+-                flex-direction: column;
+-
+-                & .header-icon {
+-                    height: 48px;
+-                    width: 48px;
+-                }
+-
+-                & .header-icon :global(svg) {
+-                    stroke-width: 1.6px;
+-                }
+-            }
++    .header-icon {
++        display: flex;
++        align-items: center;
++        justify-content: center;
++        width: 52px;
++        height: 52px;
++        border-radius: 15px;
++        color: var(--primary);
++        background: var(--card-surface);
++        border: 1px solid var(--card-border);
++        box-shadow: var(--card-shadow);
++
++        & :global(svg) {
++            width: 26px;
++            height: 26px;
++            stroke-width: 1.7px;
+         }
+     }
+ </style>
+--- /dev/null
++++ b/components/helium_onboarding/src/components/StepDots.svelte
+@@ -0,0 +1,53 @@
++<script lang="ts">
++    // Where the user is in the setup steps: a row of dots, the current one
++    // drawn out into a pill.
++    import { currentPage, flow, shouldSkip } from "../lib/onboarding-flow";
++
++    const steps = $derived(
++        flow.filter(
++            (page) => page !== "Welcome" && page !== "Finish" && !shouldSkip(page)
++        )
++    );
++    const visible = $derived(
++        $currentPage !== "Welcome" && $currentPage !== "Finish"
++    );
++</script>
++
++<div class="step-dots" class:visible aria-hidden="true">
++    {#each steps as step (step)}
++        <span class:current={step === $currentPage}></span>
++    {/each}
++</div>
++
++<style>
++    .step-dots {
++        position: fixed;
++        top: 28px;
++        left: 50%;
++        translate: -50% 0;
++        z-index: 9;
++        display: flex;
++        gap: 6px;
++        opacity: 0;
++        transition: opacity 0.4s var(--ease-out);
++
++        &.visible {
++            opacity: 1;
++        }
++
++        & span {
++            width: 6px;
++            height: 6px;
++            border-radius: 3px;
++            background: var(--helium-elevated-20);
++            transition:
++                width 0.45s var(--ease-out),
++                background-color 0.45s var(--ease-out);
++
++            &.current {
++                width: 20px;
++                background: var(--primary);
++            }
++        }
++    }
++</style>
+--- /dev/null
++++ b/components/helium_onboarding/src/lib/leto.ts
+@@ -0,0 +1,74 @@
++// Copy for Leto's own parts of onboarding. English only for now, like the
++// rest of Leto's additions; Helium's localized strings are used where the
++// meaning is unchanged.
++
++export const leto = {
++    welcome: {
++        title: "Welcome to Leto",
++        body: "A calm, private browser that keeps everything\nyou do in its place.",
++        start: "Get started",
++        skip: "Skip setup and use the defaults",
++        footer:
++            "Leto is built on Helium and uses Helium's services, which you can turn off in the next steps.",
++        privacy: "Helium's privacy policy",
++        terms: "terms",
++    },
++    tour: {
++        title: "Made for flow",
++        subtitle: "A few things that make Leto feel different.",
++        features: [
++            {
++                id: "spaces",
++                title: "Spaces",
++                body: "Keep work, home and side projects apart, each with its own tabs and logins.",
++                keys: ["⌃", "⌘", "→"],
++            },
++            {
++                id: "command",
++                title: "Command bar",
++                body: "Search, open a site or jump to any tab from one place.",
++                keys: ["⌘", "T"],
++            },
++            {
++                id: "split",
++                title: "Split view",
++                body: "Put two pages side by side, and pick what goes in the second.",
++                keys: ["⌥", "⌘", "N"],
++            },
++            {
++                id: "peek",
++                title: "Link preview",
++                body: "Glance at a link in a card over the page, then keep it or let it go.",
++                keys: ["⇧", "Click"],
++            },
++        ],
++        more: [
++            { label: "Reader view", keys: ["⌥", "⌘", "R"] },
++            { label: "Copy clean link", keys: ["⇧", "⌘", "C"] },
++            { label: "Pin a tab", keys: ["⌘", "D"] },
++        ],
++    },
++    services: {
++        title: "Private by default",
++        subtitle:
++            "Leto blocks ads and trackers out of the box, and doesn't collect anything about you.",
++        mainTitle: "Use Helium's services",
++        mainDesc:
++            "A few things, like extension downloads, ad blocker updates and browser updates, go through Helium's privacy-preserving servers. Turn this off and Leto makes no requests of its own.",
++        customize: "Choose individual services",
++        hide: "Hide individual services",
++    },
++    finish: {
++        title: "You're all set",
++        body: "Leto is ready. Here are a few shortcuts to keep in your back pocket.",
++        start: "Start browsing",
++        shortcuts: [
++            { label: "Command bar", keys: ["⌘", "T"] },
++            { label: "Switch Spaces", keys: ["⌃", "⌘", "←", "→"] },
++            { label: "Split view", keys: ["⌥", "⌘", "N"] },
++            { label: "Preview a link", keys: ["⇧", "Click"] },
++            { label: "Reader view", keys: ["⌥", "⌘", "R"] },
++            { label: "Copy clean link", keys: ["⇧", "⌘", "C"] },
++        ],
++    },
++} as const;
+--- a/components/helium_onboarding/src/lib/onboarding-flow.ts
++++ b/components/helium_onboarding/src/lib/onboarding-flow.ts
+@@ -10,6 +10,7 @@ import {
+ 
+ export const flow = [
+     "Welcome",
++    "Tour",
+     "HeliumServices",
+     "SearchEngine",
+     "DataImport",
+@@ -25,7 +26,7 @@ export const currentPage = derived(
+     $index => flow[$index]
+ );
+ 
+-const shouldSkip = (page: typeof flow[number]): boolean => {
++export const shouldSkip = (page: typeof flow[number]): boolean => {
+     switch (page) {
+         case 'DataImport':
+             return platform.is.android;
+--- a/components/helium_onboarding/src/pages/Finish.svelte
++++ b/components/helium_onboarding/src/pages/Finish.svelte
+@@ -1,14 +1,12 @@
+ <script lang="ts">
+-    import {
+-        Button,
+-        HeliumLogo,
+-        IconArrowLeft,
+-        IconCheck,
+-    } from "@imput/helium-prism";
++    import { Button, IconArrowLeft, IconArrowRight } from "@imput/helium-prism";
+     import { s } from "../lib/strings";
++    import { leto } from "../lib/leto";
+     import { setPref, openNewTab } from "../lib/browser";
+     import { currentPage, previousPage } from "../lib/onboarding-flow";
+ 
++    import LetoIcon from "../components/LetoIcon.svelte";
++
+     const done = async () => {
+         await setPref('completed_onboarding', true);
+         openNewTab();
+@@ -17,32 +15,37 @@
+     const visible = $derived($currentPage === "Finish");
+ </script>
+ 
+-<div
+-    id="finish-page"
+-    class="onboarding-page"
+-    class:visible
+->
+-    <div id="finish-page-container">
+-        <div id="finish-top">
+-            <div id="finish-logo-text">
+-                <div id="finish-logo">
+-                    <HeliumLogo height="64px" />
+-                </div>
+-                <div id="finish-text">
+-                    <h1>{s.finish.title}</h1>
+-                    <p>{s.finish.body}</p>
++<div id="finish-page" class="onboarding-page" class:visible>
++    <div id="finish-content">
++        <div class="moon">
++            <LetoIcon size={88} />
++        </div>
++
++        <div class="text">
++            <h1>{leto.finish.title}</h1>
++            <p>{leto.finish.body}</p>
++        </div>
++
++        <div class="shortcuts leto-card">
++            {#each leto.finish.shortcuts as shortcut, index}
++                <div class="shortcut" style:--index={index}>
++                    <span>{shortcut.label}</span>
++                    <span class="keys">
++                        {#each shortcut.keys as key}<kbd>{key}</kbd>{/each}
++                    </span>
+                 </div>
+-            </div>
+-            <div class="action-buttons">
+-                <Button onclick={previousPage}>
+-                    <IconArrowLeft />
+-                    {s.button.back}
+-                </Button>
+-                <Button primary onclick={done}>
+-                    <IconCheck />
+-                    {s.button.letsGo}
+-                </Button>
+-            </div>
++            {/each}
++        </div>
++
++        <div class="actions">
++            <Button onclick={previousPage}>
++                <IconArrowLeft />
++                {s.button.back}
++            </Button>
++            <Button primary onclick={done}>
++                {leto.finish.start}
++                <IconArrowRight />
++            </Button>
+         </div>
+     </div>
+ </div>
+@@ -52,36 +55,85 @@
+         --page-in-delay: 0.15s;
+     }
+ 
+-    #finish-top,
+-    #finish-text,
+-    #finish-logo-text {
++    #finish-content {
++        display: flex;
++        flex-direction: column;
++        align-items: center;
++        gap: 28px;
++        padding-inline: 24px;
++    }
++
++    .text {
+         display: flex;
+         flex-direction: column;
++        align-items: center;
++        gap: 12px;
++
++        & p {
++            font-size: 18px;
++            max-width: 420px;
++            text-wrap: balance;
++        }
+     }
+ 
+-    #finish-page-container {
+-        max-width: 500px;
++    .visible .moon {
++        animation: settle 1.2s var(--ease-out) 0.1s both;
+     }
+ 
+-    #finish-top,
+-    #finish-logo-text {
+-        height: 100%;
+-        gap: 32px;
+-        justify-content: center;
++    .shortcuts {
++        display: grid;
++        grid-template-columns: repeat(2, minmax(0, 1fr));
++        column-gap: 28px;
++        width: 520px;
++        max-width: 100%;
++        padding: 8px 20px;
++        text-align: left;
++    }
++
++    .shortcut {
++        display: flex;
+         align-items: center;
++        justify-content: space-between;
++        gap: 12px;
++        padding: 10px 0;
++        font-size: 14px;
++        color: var(--secondary);
++        border-bottom: 1px solid var(--helium-elevated-7);
++
++        &:nth-last-child(-n + 2) {
++            border-bottom: none;
++        }
+     }
+ 
+-    #finish-logo-text,
+-    #finish-text {
+-        gap: 16px
++    .visible .shortcut {
++        animation: rise 0.6s var(--ease-out) both;
++        animation-delay: calc(0.35s + var(--index) * 50ms);
+     }
+ 
+-    #finish-logo {
++    .actions {
+         display: flex;
+-        align-items: center;
++        gap: var(--gap-2);
++    }
++
++    @keyframes settle {
++        from {
++            opacity: 0;
++            scale: 0.85;
++            filter: blur(8px);
++        }
++    }
++
++    @keyframes rise {
++        from {
++            opacity: 0;
++            translate: 0 8px;
++        }
+     }
+ 
+-    #finish-text p {
+-        font-size: 20px;
++    @media (prefers-reduced-motion: reduce) {
++        .visible .moon,
++        .visible .shortcut {
++            animation: none;
++        }
+     }
+ </style>
+--- a/components/helium_onboarding/src/pages/HeliumServices.svelte
++++ b/components/helium_onboarding/src/pages/HeliumServices.svelte
+@@ -1,15 +1,19 @@
+ <script lang="ts">
+-    import { CardLink, HeliumLogo } from "@imput/helium-prism";
++    import { CardLink, IconChevronDown } from "@imput/helium-prism";
+     import { s } from "../lib/strings";
++    import { leto } from "../lib/leto";
+     import { platform } from "../lib/platform";
+     import { currentPage } from "../lib/onboarding-flow";
+     import { preferences as pr } from "../lib/browser";
+ 
+     import PreferenceToggle from "../components/PreferenceToggle.svelte";
+     import PageHeader from "../components/PageHeader.svelte";
++    import IconShieldCheck from "../icons/tabler/IconShieldCheck.svelte";
+ 
+     const visible = $derived($currentPage === "HeliumServices");
+     const servicesEnabled = $derived($pr["services.enabled"]);
++    let customizing = $state(false);
++
+     const services = ([
+         {
+             title: s.services.extensionsTitle,
+@@ -51,39 +55,50 @@
+ <div id="services-page" class="onboarding-page" class:visible>
+     <div class="scrollable-page">
+         <PageHeader
+-            title={s.services.title}
+-            subtitle={s.services.subtitle}
+-            Icon={HeliumLogo}
+-            iconHeight="32px"
++            title={leto.services.title}
++            subtitle={leto.services.subtitle}
++            Icon={IconShieldCheck}
+         />
+         <div class="page-content">
+-            <PreferenceToggle
+-                title={s.services.connectionTitle}
+-                desc={s.services.connectionDesc}
+-                prefName="services.enabled"
+-            />
+-            <div class="toggle-separator"></div>
+-            {#each services as service (service.prefName)}
++            <div class="main-toggle">
+                 <PreferenceToggle
+-                    title={service.title}
+-                    desc={service.desc}
+-                    prefName={service.prefName}
+-                    disabled={!servicesEnabled}
++                    title={leto.services.mainTitle}
++                    desc={leto.services.mainDesc}
++                    prefName="services.enabled"
+                 />
+-            {/each}
+-            <!-- TODO: wire instance settings on android -->
+-            {#if !platform.is.android}
+-                <div
+-                    class="instance-link"
+-                    class:inactive={!servicesEnabled}
+-                    inert={!servicesEnabled}
+-                >
+-                    <CardLink
+-                        title={s.services.instanceTitle}
+-                        desc={s.services.instanceDesc}
+-                        href="chrome://settings/privacy/services"
+-                        disabled={!servicesEnabled}
+-                    />
++            </div>
++
++            <button
++                class="disclosure"
++                class:open={customizing}
++                aria-expanded={customizing}
++                onclick={() => (customizing = !customizing)}
++            >
++                {customizing ? leto.services.hide : leto.services.customize}
++                <IconChevronDown />
++            </button>
++
++            {#if customizing}
++                <div class="services" class:inactive={!servicesEnabled}>
++                    {#each services as service (service.prefName)}
++                        <PreferenceToggle
++                            title={service.title}
++                            desc={service.desc}
++                            prefName={service.prefName}
++                            disabled={!servicesEnabled}
++                        />
++                    {/each}
++                    <!-- TODO: wire instance settings on android -->
++                    {#if !platform.is.android}
++                        <div inert={!servicesEnabled}>
++                            <CardLink
++                                title={s.services.instanceTitle}
++                                desc={s.services.instanceDesc}
++                                href="chrome://settings/privacy/services"
++                                disabled={!servicesEnabled}
++                            />
++                        </div>
++                    {/if}
+                 </div>
+             {/if}
+         </div>
+@@ -95,9 +110,60 @@
+         --page-in-delay: 0.1s;
+     }
+ 
+-    .toggle-separator {
+-        height: 2px;
+-        width: calc(100% - 48px);
+-        background: var(--helium-elevated-10);
++    .main-toggle {
++        width: 100%;
++        text-align: left;
++    }
++
++    .disclosure {
++        display: inline-flex;
++        align-items: center;
++        gap: 6px;
++        padding: 6px 10px;
++        border-radius: 8px;
++        background: none;
++        color: var(--secondary);
++        font-size: 13px;
++        transition: color 0.2s, background-color 0.2s;
++
++        &:hover {
++            color: var(--primary);
++            background: var(--helium-elevated-5);
++        }
++
++        & :global(svg) {
++            width: 14px;
++            height: 14px;
++            transition: rotate 0.3s var(--ease-out);
++        }
++
++        &.open :global(svg) {
++            rotate: 180deg;
++        }
++    }
++
++    .services {
++        display: flex;
++        flex-direction: column;
++        gap: var(--gap-2);
++        width: 100%;
++        text-align: left;
++        animation: reveal 0.45s var(--ease-out);
++        transition: opacity 0.3s;
++
++        &.inactive {
++            opacity: 0.6;
++        }
++
++        & > :global(*) {
++            width: 100%;
++        }
++    }
++
++    @keyframes reveal {
++        from {
++            opacity: 0;
++            translate: 0 -6px;
++        }
+     }
+ </style>
+--- /dev/null
++++ b/components/helium_onboarding/src/pages/Tour.svelte
+@@ -0,0 +1,491 @@
++<script lang="ts">
++    import { leto } from "../lib/leto";
++    import { currentPage } from "../lib/onboarding-flow";
++
++    const visible = $derived($currentPage === "Tour");
++</script>
++
++<div id="tour-page" class="onboarding-page" class:visible>
++    <div class="scrollable-page tour">
++        <div class="header">
++            <h2>{leto.tour.title}</h2>
++            <p>{leto.tour.subtitle}</p>
++        </div>
++
++        <div class="features">
++            {#each leto.tour.features as feature, index (feature.id)}
++                <article class="feature leto-card" style:--index={index}>
++                    <div class="stage" aria-hidden="true">
++                        <div class={["window", feature.id]}>
++                            {#if feature.id === "spaces"}
++                                <div class="sidebar">
++                                    <i></i><i></i><i></i>
++                                    <div class="space-dots">
++                                        <b></b><b></b><b></b>
++                                    </div>
++                                </div>
++                                <div class="page">
++                                    <div class="slides">
++                                        <div class="slide a"></div>
++                                        <div class="slide b"></div>
++                                    </div>
++                                </div>
++                            {:else if feature.id === "command"}
++                                <div class="sidebar"><i></i><i></i><i></i></div>
++                                <div class="page lines">
++                                    <i></i><i></i><i></i><i></i>
++                                </div>
++                                <div class="dim"></div>
++                                <div class="bar">
++                                    <div class="field"><span class="typed"></span></div>
++                                    <div class="row"></div>
++                                    <div class="row"></div>
++                                    <div class="row"></div>
++                                </div>
++                            {:else if feature.id === "split"}
++                                <div class="sidebar"><i></i><i></i><i></i></div>
++                                <div class="panes">
++                                    <div class="pane left lines"><i></i><i></i><i></i></div>
++                                    <div class="pane right lines"><i></i><i></i><i></i></div>
++                                </div>
++                            {:else if feature.id === "peek"}
++                                <div class="sidebar"><i></i><i></i><i></i></div>
++                                <div class="page lines">
++                                    <i></i><i class="link"></i><i></i><i></i>
++                                </div>
++                                <div class="card lines"><i></i><i></i><i></i></div>
++                            {/if}
++                        </div>
++                    </div>
++                    <div class="copy">
++                        <div class="title-row">
++                            <h4>{feature.title}</h4>
++                            <span class="keys">
++                                {#each feature.keys as key}<kbd>{key}</kbd>{/each}
++                            </span>
++                        </div>
++                        <p>{feature.body}</p>
++                    </div>
++                </article>
++            {/each}
++        </div>
++
++        <div class="more">
++            {#each leto.tour.more as item}
++                <div class="chip">
++                    <span>{item.label}</span>
++                    <span class="keys">
++                        {#each item.keys as key}<kbd>{key}</kbd>{/each}
++                    </span>
++                </div>
++            {/each}
++        </div>
++    </div>
++</div>
++
++<style>
++    #tour-page {
++        --page-in-delay: 0.1s;
++    }
++
++    .tour {
++        max-width: 760px;
++        padding-top: 72px;
++    }
++
++    .header {
++        display: flex;
++        flex-direction: column;
++        align-items: center;
++        gap: 10px;
++        margin-bottom: 28px;
++
++        & p {
++            font-size: 17px;
++        }
++    }
++
++    .features {
++        display: grid;
++        grid-template-columns: repeat(2, minmax(0, 1fr));
++        gap: 14px;
++        text-align: left;
++    }
++
++    .feature {
++        display: flex;
++        flex-direction: column;
++        overflow: hidden;
++    }
++
++    .visible .feature {
++        animation: card-in 0.7s var(--ease-out) both;
++        animation-delay: calc(0.18s + var(--index) * 70ms);
++    }
++
++    .copy {
++        display: flex;
++        flex-direction: column;
++        gap: 6px;
++        padding: 14px 16px 16px;
++
++        & p {
++            font-size: 13.5px;
++            line-height: 1.45;
++        }
++    }
++
++    .title-row {
++        display: flex;
++        align-items: center;
++        justify-content: space-between;
++        gap: 8px;
++
++        & h4 {
++            font-size: 15px;
++            color: var(--primary);
++        }
++    }
++
++    .more {
++        display: flex;
++        flex-wrap: wrap;
++        justify-content: center;
++        gap: 8px;
++        margin-top: 16px;
++    }
++
++    .chip {
++        display: flex;
++        align-items: center;
++        gap: 10px;
++        padding: 6px 6px 6px 12px;
++        border-radius: 12px;
++        font-size: 13px;
++        color: var(--secondary);
++        background: var(--helium-elevated-5);
++    }
++
++    /* The illustrations: a tiny Leto window, drawn in soft blocks. */
++    .stage {
++        position: relative;
++        height: 150px;
++        padding: 18px 22px 0;
++        background:
++            radial-gradient(120% 90% at 50% 0%, var(--glow), transparent 70%),
++            var(--helium-elevated-5);
++        overflow: hidden;
++    }
++
++    .window {
++        --ink: var(--helium-elevated-15);
++        --ink-soft: var(--helium-elevated-10);
++        --surface: var(--bg-surface);
++
++        position: relative;
++        display: flex;
++        gap: 6px;
++        height: 150px;
++        padding: 7px;
++        border-radius: 10px 10px 0 0;
++        background: var(--helium-elevated-7);
++        box-shadow: 0 0 0 1px var(--card-border), var(--card-shadow);
++        overflow: hidden;
++    }
++
++    .sidebar {
++        display: flex;
++        flex-direction: column;
++        gap: 5px;
++        width: 24%;
++        padding: 4px 2px;
++
++        & i {
++            height: 7px;
++            border-radius: 3px;
++            background: var(--ink);
++
++            &:first-child {
++                background: var(--ink-soft);
++                height: 11px;
++                margin-bottom: 3px;
++            }
++        }
++    }
++
++    .page,
++    .panes .pane {
++        position: relative;
++        flex: 1;
++        border-radius: 6px;
++        background: var(--surface);
++        overflow: hidden;
++    }
++
++    .lines {
++        display: flex;
++        flex-direction: column;
++        gap: 6px;
++        padding: 12px;
++
++        & i {
++            height: 6px;
++            border-radius: 3px;
++            background: var(--ink-soft);
++
++            &:nth-child(2) {
++                width: 80%;
++            }
++
++            &:nth-child(3) {
++                width: 90%;
++            }
++
++            &:nth-child(4) {
++                width: 60%;
++            }
++        }
++    }
++
++    /* Spaces: the page slides over to another space and back, and the dot
++       for the current space follows. */
++    .spaces {
++        & .sidebar {
++            position: relative;
++        }
++
++        & .space-dots {
++            position: absolute;
++            left: 0;
++            right: 0;
++            bottom: 14px;
++            display: flex;
++            justify-content: center;
++            gap: 4px;
++
++            & b {
++                width: 5px;
++                height: 5px;
++                border-radius: 3px;
++                background: var(--ink);
++            }
++
++            & b:first-child {
++                animation: dot-a 6s var(--ease-in-out) infinite;
++            }
++
++            & b:nth-child(2) {
++                animation: dot-b 6s var(--ease-in-out) infinite;
++            }
++        }
++
++        & .slides {
++            display: flex;
++            width: 200%;
++            height: 100%;
++            animation: slide 6s var(--ease-in-out) infinite;
++        }
++
++        & .slide {
++            width: 50%;
++            height: 100%;
++
++            &.a {
++                background:
++                    linear-gradient(160deg, rgba(150, 150, 255, 0.28), transparent 70%),
++                    var(--surface);
++            }
++
++            &.b {
++                background:
++                    linear-gradient(160deg, rgba(255, 170, 120, 0.28), transparent 70%),
++                    var(--surface);
++            }
++        }
++    }
++
++    @keyframes slide {
++        0%, 38% { translate: 0 0; }
++        50%, 88% { translate: -50% 0; }
++        100% { translate: 0 0; }
++    }
++
++    @keyframes dot-a {
++        0%, 38%, 100% { width: 12px; background: var(--primary); }
++        50%, 88% { width: 5px; background: var(--ink); }
++    }
++
++    @keyframes dot-b {
++        0%, 38%, 100% { width: 5px; background: var(--ink); }
++        50%, 88% { width: 12px; background: var(--primary); }
++    }
++
++    /* Command bar: it drops in over the page, a query is typed and results
++       appear. */
++    .command {
++        & .dim {
++            position: absolute;
++            inset: 0;
++            background: rgba(0, 0, 0, 0.18);
++            animation: dim 6s var(--ease-out) infinite;
++        }
++
++        & .bar {
++            position: absolute;
++            left: 50%;
++            top: 22px;
++            width: 62%;
++            translate: -50% 0;
++            display: flex;
++            flex-direction: column;
++            gap: 5px;
++            padding: 6px;
++            border-radius: 8px;
++            background: var(--surface);
++            box-shadow: 0 0 0 1px var(--card-border), 0 10px 24px rgba(0, 0, 0, 0.18);
++            animation: bar 6s var(--ease-out) infinite;
++        }
++
++        & .field {
++            height: 16px;
++            padding: 5px 6px;
++            border-radius: 5px;
++            background: var(--helium-elevated-5);
++        }
++
++        & .typed {
++            display: block;
++            height: 6px;
++            border-radius: 3px;
++            background: var(--primary);
++            opacity: 0.55;
++            animation: type 6s steps(6) infinite;
++        }
++
++        & .row {
++            height: 10px;
++            border-radius: 4px;
++            background: var(--ink-soft);
++            animation: row 6s var(--ease-out) infinite;
++
++            &:nth-child(2) {
++                background: var(--ink);
++            }
++
++            &:nth-child(3) {
++                width: 85%;
++                animation-delay: 0.08s;
++            }
++
++            &:nth-child(4) {
++                width: 70%;
++                animation-delay: 0.16s;
++            }
++        }
++    }
++
++    @keyframes dim {
++        0%, 8% { opacity: 0; }
++        16%, 82% { opacity: 1; }
++        92%, 100% { opacity: 0; }
++    }
++
++    @keyframes bar {
++        0%, 8% { opacity: 0; scale: 0.94; translate: -50% -6px; }
++        18%, 82% { opacity: 1; scale: 1; translate: -50% 0; }
++        92%, 100% { opacity: 0; scale: 0.97; translate: -50% 0; }
++    }
++
++    @keyframes type {
++        0%, 20% { width: 0; }
++        42%, 100% { width: 55%; }
++    }
++
++    @keyframes row {
++        0%, 42% { opacity: 0; translate: 0 4px; }
++        50%, 100% { opacity: 1; translate: 0 0; }
++    }
++
++    /* Split view: a second page slides in beside the first. */
++    .split {
++        & .panes {
++            position: relative;
++            display: flex;
++            flex: 1;
++            gap: 5px;
++        }
++
++        & .pane.left {
++            animation: pane-left 6s var(--ease-in-out) infinite;
++            flex: none;
++        }
++
++        & .pane.right {
++            animation: pane-right 6s var(--ease-in-out) infinite;
++            flex: none;
++            background:
++                linear-gradient(160deg, rgba(120, 200, 170, 0.25), transparent 70%),
++                var(--surface);
++        }
++    }
++
++    @keyframes pane-left {
++        0%, 20% { width: 100%; }
++        36%, 84% { width: calc(50% - 2.5px); }
++        100% { width: 100%; }
++    }
++
++    @keyframes pane-right {
++        0%, 20% { width: 0; opacity: 0; }
++        36%, 84% { width: calc(50% - 2.5px); opacity: 1; }
++        100% { width: 0; opacity: 0; }
++    }
++
++    /* Link preview: a card grows out of a link and settles over the page. */
++    .peek {
++        & .link {
++            background: var(--primary) !important;
++            opacity: 0.45;
++            width: 40% !important;
++        }
++
++        & .card {
++            position: absolute;
++            left: 34%;
++            top: 18px;
++            width: 58%;
++            height: 112px;
++            border-radius: 8px;
++            background: var(--surface);
++            box-shadow: 0 0 0 1px var(--card-border), 0 14px 30px rgba(0, 0, 0, 0.22);
++            transform-origin: 18% 18%;
++            animation: peek 6s var(--ease-out) infinite;
++        }
++    }
++
++    @keyframes peek {
++        0%, 18% { opacity: 0; scale: 0.2; }
++        32%, 82% { opacity: 1; scale: 1; }
++        94%, 100% { opacity: 0; scale: 0.9; }
++    }
++
++    @keyframes card-in {
++        from {
++            opacity: 0;
++            translate: 0 16px;
++        }
++    }
++
++    @media (prefers-reduced-motion: reduce) {
++        .window *,
++        .visible .feature {
++            animation: none !important;
++        }
++    }
++
++    @media (max-width: 640px) {
++        .features {
++            grid-template-columns: 1fr;
++        }
++    }
++</style>
+--- a/components/helium_onboarding/src/pages/Welcome.svelte
++++ b/components/helium_onboarding/src/pages/Welcome.svelte
+@@ -1,23 +1,16 @@
+ <script lang="ts">
+-    import { flushSync, onMount } from "svelte";
+-    import {
+-        Button,
+-        HeliumLogo,
+-        IconArrowRight,
+-        IconCheck,
+-        Link,
+-    } from "@imput/helium-prism";
+-    import { s } from "../lib/strings";
+-    import { parseLocalizedString } from "../lib/i18n";
++    import { Button, IconArrowRight, Link } from "@imput/helium-prism";
++    import { leto } from "../lib/leto";
+     import { setPref, acceptLatestSchema, openNewTab } from "../lib/browser";
+     import {
+         currentPage,
+         hasSeenIntro,
+         markIntroSeen,
+         nextPage,
+-        ONBOARDING_INTRO_DELAY_MS,
+     } from "../lib/onboarding-flow";
+ 
++    import LetoIcon from "../components/LetoIcon.svelte";
++
+     const useDefaults = async () => {
+         acceptLatestSchema();
+         await setPref('services.user_consented', true);
+@@ -26,104 +19,53 @@
+     }
+ 
+     const visible = $derived($currentPage === "Welcome");
++    // The full intro plays once; coming back here just shows the page.
++    const intro = !$hasSeenIntro;
+ 
+     const privacyUrl = "https://helium.computer/privacy";
+     const termsUrl = "https://helium.computer/terms";
+-    const LOGO_TRANSITION_DELAY_MS = ONBOARDING_INTRO_DELAY_MS + 1600;
+-    const termsParts = parseLocalizedString(s.welcome.terms);
+-
+-    let introLogoVisible = $state(!$hasSeenIntro);
+-    let introAnimating = $state(!$hasSeenIntro);
+-    const finalLogoVisible = $derived(!introLogoVisible);
+ 
+     const next = () => {
+         markIntroSeen();
+         nextPage();
+     }
+-
+-    const transitionIntroLogo = async () => {
+-        const transition = document.startViewTransition(() => {
+-            flushSync(() => {
+-                introLogoVisible = false;
+-            });
+-        });
+-
+-        await transition.finished;
+-        introAnimating = false;
+-    }
+-
+-    onMount(() => {
+-        if ($hasSeenIntro) {
+-            return;
+-        }
+-
+-        const timer = window.setTimeout(
+-            transitionIntroLogo,
+-            LOGO_TRANSITION_DELAY_MS
+-        );
+-
+-        return () => {
+-            window.clearTimeout(timer);
+-        }
+-    });
+ </script>
+ 
+-{#if introLogoVisible}
+-    <div id="welcome-logo-intro">
+-        <HeliumLogo height="84px" />
+-    </div>
+-{/if}
+-
+ <div
+     id="welcome-page"
+     class="onboarding-page"
+     class:visible
+-    class:intro={!$hasSeenIntro}
+-    inert={introAnimating}
++    class:intro
+ >
+-    <div id="welcome-page-container">
+-        <div id="welcome-top">
+-            <div id="welcome-logo-text">
+-                <div id="welcome-logo" class:visible={finalLogoVisible}>
+-                    <HeliumLogo height="48px" />
+-                </div>
+-                <div id="welcome-text">
+-                    <h1>
+-                        {s.welcome.greeting}
+-                    </h1>
+-                    <p>
+-                        {s.welcome.body}
+-                    </p>
+-                </div>
+-            </div>
+-            <div id="welcome-buttons" class="action-buttons">
+-                <Button onclick={useDefaults}>
+-                    <IconCheck />
+-                    {s.button.useDefaults}
+-                </Button>
+-                <Button primary onclick={next}>
+-                    <IconArrowRight />
+-                    {s.button.configure}
+-                </Button>
+-            </div>
+-
+-            <div id="welcome-footer">
+-                <p>
+-                    {#each termsParts as part}
+-                        {#if part.kind === "linkPrivacy"}
+-                            <Link href={privacyUrl}>{part.text}</Link>
+-                        {:else if part.kind === "linkTerms"}
+-                            <Link href={termsUrl}>{part.text}</Link>
+-                        {:else}
+-                            {part.text}
+-                        {/if}
+-                    {/each}
+-                </p>
++    <div id="welcome-content">
++        <div class="moon">
++            <LetoIcon size={104} />
++        </div>
++
++        <div class="text">
++            <h1>{leto.welcome.title}</h1>
++            <p>{leto.welcome.body}</p>
++        </div>
+ 
+-                <p>{s.welcome.footer}</p>
+-            </div>
++        <div class="actions">
++            <Button primary onclick={next}>
++                {leto.welcome.start}
++                <IconArrowRight />
++            </Button>
++            <button class="skip" onclick={useDefaults}>
++                {leto.welcome.skip}
++            </button>
+         </div>
+     </div>
++
++    <footer>
++        <p>
++            {leto.welcome.footer}
++            <Link href={privacyUrl}>{leto.welcome.privacy}</Link>
++            ·
++            <Link href={termsUrl}>{leto.welcome.terms}</Link>
++        </p>
++    </footer>
+ </div>
+ 
+ <style>
+@@ -131,205 +73,157 @@
+         --page-in-delay: 0.1s;
+     }
+ 
+-    #welcome-top,
+-    #welcome-text,
+-    #welcome-logo-text {
++    #welcome-content {
+         display: flex;
+         flex-direction: column;
+-        align-items: flex-start;
+-        text-align: left;
+-    }
+-
+-    #welcome-page-container {
+-        width: 100%;
+-        max-width: 548px;
++        align-items: center;
++        gap: 36px;
+         padding-inline: 24px;
++        margin-top: -4vh;
+     }
+ 
+-    #welcome-top,
+-    #welcome-logo-text {
+-        height: 100%;
+-        gap: 32px;
+-        justify-content: center;
+-    }
+-
+-    #welcome-logo-text,
+-    #welcome-text {
++    .text {
++        display: flex;
++        flex-direction: column;
++        align-items: center;
+         gap: 14px;
++
++        & h1 {
++            font-size: 48px;
++        }
++
++        & p {
++            font-size: 19px;
++            line-height: 1.45;
++            color: var(--secondary);
++        }
+     }
+ 
+-    #welcome-logo {
++    .actions {
+         display: flex;
+-        opacity: 0;
++        flex-direction: column;
++        align-items: center;
++        gap: 14px;
+ 
+-        &.visible {
+-            opacity: 1;
+-            view-transition-name: welcome-logo;
++        & :global(.button.primary) {
++            height: 44px;
++            padding-inline: 22px 18px;
++            border-radius: 22px;
++            font-size: 15px;
++            font-weight: 600;
++            gap: 8px;
+         }
+     }
+ 
+-    #welcome-text p {
+-        font-size: 21px;
+-        max-width: 500px;
++    .skip {
++        padding: 6px 10px;
++        border-radius: 8px;
++        background: none;
++        color: var(--tertiary);
++        font-size: 13px;
++        transition: color 0.2s, background-color 0.2s;
++
++        &:hover {
++            color: var(--secondary);
++            background: var(--helium-elevated-5);
++        }
+     }
+ 
+-    #welcome-footer {
+-        display: flex;
+-        flex-direction: column;
+-        width: 100%;
++    footer {
++        position: absolute;
++        bottom: 28px;
++        max-width: 560px;
++        padding-inline: 24px;
+ 
+-        p {
+-            font-size: 13px;
++        & p {
++            font-size: 12px;
++            line-height: 1.5;
++            color: var(--tertiary);
++            text-wrap: balance;
+         }
+ 
+-        :global(a) {
++        & :global(a) {
+             font-size: inherit;
+             line-height: inherit;
+         }
+     }
+ 
+-    #welcome-logo-intro {
+-        display: flex;
+-        position: absolute;
+-        z-index: 1;
+-        top: 50%;
+-        translate: 0 -50%;
+-
+-        animation:
+-            intro-logo-center
+-            1.7s
+-            cubic-bezier(0.16, 1, 0.3, 1)
+-            calc(var(--onboarding-intro-delay) + 0.85s)
+-            both;
+-        view-transition-name: welcome-logo;
+-        will-change: transform, opacity;
+-    }
+-
++    /* The first time: the moon rises out of the dark, then the words and
++       buttons follow, one after another. */
+     #welcome-page.visible.intro {
+         animation: none;
+ 
+-        #welcome-text,
+-        #welcome-buttons,
+-        #welcome-footer {
+-            opacity: 0;
+-            animation:
+-                page-in
+-                0.35s
+-                forwards
+-                calc(var(--onboarding-intro-delay) + 1.8s);
++        & .moon {
++            animation: moon-rise 1.6s var(--ease-out) 0.35s both;
+         }
+-    }
+-
+-    :global(::view-transition-group(welcome-logo)) {
+-        animation-duration: 0.72s;
+-        animation-timing-function: cubic-bezier(0.32, 1, 0.4, 1);
+-    }
+-
+-    :global(::view-transition-image-pair(welcome-logo)) {
+-        animation: intro-logo-arc 0.72s;
+-    }
+ 
+-    :global(::view-transition-old(welcome-logo)),
+-    :global(::view-transition-new(welcome-logo)) {
+-        animation: none;
+-        height: 100%;
+-        object-fit: contain;
+-        width: 100%;
+-    }
++        & .moon :global(.leto-icon::before) {
++            animation: moonlight 2.4s var(--ease-out) 0.6s both;
++        }
+ 
+-    @keyframes intro-logo-center {
+-        from {
+-            opacity: 0;
+-            transform: translateY(360px);
++        & h1 {
++            animation: rise 0.9s var(--ease-out) 1.25s both;
+         }
+ 
+-        to {
+-            opacity: 1;
+-            transform: none;
++        & .text p {
++            animation: rise 0.9s var(--ease-out) 1.4s both;
+         }
+-    }
+ 
+-    @keyframes intro-logo-arc {
+-        from,
+-        to {
+-            translate: 0 0;
++        & .actions {
++            animation: rise 0.9s var(--ease-out) 1.6s both;
+         }
+ 
+-        20% {
+-            translate: 0 -40px;
++        & footer {
++            animation: fade 1.2s var(--ease-out) 2s both;
+         }
+     }
+ 
+-    @media (prefers-reduced-motion: reduce) {
+-        #welcome-page.visible.intro {
++    @keyframes moon-rise {
++        from {
+             opacity: 0;
+-            animation:
+-                intro-state-fade-in
+-                0.5s
+-                calc(var(--onboarding-intro-delay) + 1.6s)
+-                both;
+-
+-            #welcome-text,
+-            #welcome-buttons,
+-            #welcome-footer {
+-                opacity: 1;
+-                animation: none;
+-            }
+-        }
+-
+-        #welcome-logo-intro {
+-            animation:
+-                intro-logo-center
+-                0.5s
+-                calc(var(--onboarding-intro-delay) + 0.2s)
+-                both;
++            translate: 0 36px;
++            scale: 0.9;
++            filter: blur(10px);
+         }
+ 
+-        #welcome-logo.visible {
+-            view-transition-name: none;
++        to {
++            opacity: 1;
++            filter: none;
+         }
++    }
+ 
+-        :global(::view-transition-group(welcome-logo)),
+-        :global(::view-transition-image-pair(welcome-logo)) {
+-            animation: none;
++    @keyframes moonlight {
++        from {
++            opacity: 0;
++            scale: 0.6;
+         }
+ 
+-        :global(::view-transition-old(welcome-logo)) {
+-            animation: intro-logo-fade-out 0.5s both;
++        to {
++            opacity: 1;
+         }
++    }
+ 
+-        :global(::view-transition-new(welcome-logo)) {
+-            display: none;
++    @keyframes rise {
++        from {
++            opacity: 0;
++            translate: 0 14px;
+         }
+ 
+-        @keyframes intro-logo-center {
+-            from {
+-                opacity: 0;
+-            }
+-
+-            to {
+-                opacity: 1;
+-            }
++        to {
++            opacity: 1;
+         }
++    }
+ 
+-        @keyframes intro-logo-fade-out {
+-            from {
+-                opacity: 1;
+-            }
+-
+-            to {
+-                opacity: 0;
+-            }
++    @keyframes fade {
++        from {
++            opacity: 0;
+         }
++    }
+ 
+-        @keyframes intro-state-fade-in {
+-            from {
+-                opacity: 0;
+-            }
+-
+-            to {
+-                opacity: 1;
+-            }
++    @media (prefers-reduced-motion: reduce) {
++        #welcome-page.visible.intro * {
++            animation-name: fade !important;
++            translate: none;
+         }
+     }
+ </style>
+--- a/components/helium_onboarding/src/pages/index.ts
++++ b/components/helium_onboarding/src/pages/index.ts
+@@ -1,4 +1,5 @@
+ export { default as Welcome } from "./Welcome.svelte";
++export { default as Tour } from "./Tour.svelte";
+ export { default as HeliumServices } from "./HeliumServices.svelte";
+ export { default as SearchEngine } from "./SearchEngine.svelte";
+ export { default as DataImport } from "./DataImport.svelte";
