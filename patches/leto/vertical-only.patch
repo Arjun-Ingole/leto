@@ -1,0 +1,227 @@
+--- a/chrome/browser/resources/settings/appearance_page/appearance_layout_page.html.ts
++++ b/chrome/browser/resources/settings/appearance_page/appearance_layout_page.html.ts
+@@ -10,28 +10,6 @@ export function getHtml(this: SettingsAp
+   // clang-format off
+   return html`<!--_html_template_start_-->
+ <settings-section page-title="$i18n{layoutPageTitle}">
+-  <settings-radio-group id="browserLayout" is-horizontal
+-      pref-key="helium.browser.layout"
+-      group-aria-label="$i18n{browserLayout}">
+-    ${this.browserLayoutOptions_.map(item => html`
+-      <controlled-radio-button class="browser-layout-option"
+-          name="${item.value}" pref-key="helium.browser.layout"
+-          label="${item.name}" hide-label-text no-extension-indicator>
+-        <div class="browser-layout-preview ${item.preview}"
+-            aria-hidden="true">
+-          <div class="preview-tabs"><div></div><div></div><div></div></div>
+-          <div class="preview-toolbar"></div>
+-          <div class="preview-content"></div>
+-        </div>
+-        <div aria-hidden="true">${item.name}</div>
+-      </controlled-radio-button>
+-    `)}
+-  </settings-radio-group>
+-  <settings-toggle-button class="hr"
+-      ?hidden="${!this.showVerticalSettings_()}"
+-      pref-key="helium.browser.vertical_right_aligned"
+-      label="$i18n{tabStripRightAlign}">
+-  </settings-toggle-button>
+   <settings-toggle-button class="hr" disabled
+       ?hidden="${!this.showVerticalTabsExpandOnHoverSetting_() ||
+                  !this.isExpandOnHoverForcedByZenMode_()}"
+--- a/chrome/browser/resources/settings/appearance_page/appearance_layout_page.ts
++++ b/chrome/browser/resources/settings/appearance_page/appearance_layout_page.ts
+@@ -2,8 +2,6 @@
+ // You can use, redistribute, and/or modify this source code under
+ // the terms of the GPL-3.0 license that can be found in the LICENSE file.
+ 
+-import '../controls/controlled_radio_button.js';
+-import '../controls/settings_radio_group.js';
+ import '../controls/settings_toggle_button.js';
+ import '../settings_page/settings_section.js';
+ 
+@@ -26,12 +24,6 @@ enum BrowserLayout {
+   DYNAMIC = 3,
+ }
+ 
+-interface BrowserLayoutOption {
+-  value: BrowserLayout;
+-  name: string;
+-  preview: string;
+-}
+-
+ const SettingsAppearanceLayoutPageElementBase =
+     PrefServiceObserverMixinLit(CrLitElement);
+ 
+@@ -52,7 +44,6 @@ export class SettingsAppearanceLayoutPag
+   static override get properties() {
+     return {
+       browserLayoutPref_: {type: Object},
+-      browserLayoutOptions_: {type: Array},
+       showVerticalTabsExpandOnHoverEnabled_: {type: Boolean},
+       zenModePref_: {type: Object},
+       zenModeSidebarPinnedPref_: {type: Object},
+@@ -71,29 +62,6 @@ export class SettingsAppearanceLayoutPag
+     value: true,
+   };
+ 
+-  protected accessor browserLayoutOptions_: BrowserLayoutOption[] = [
+-    {
+-      value: BrowserLayout.CLASSIC,
+-      name: loadTimeData.getString('browserLayoutClassic'),
+-      preview: 'classic',
+-    },
+-    {
+-      value: BrowserLayout.DYNAMIC,
+-      name: loadTimeData.getString('browserLayoutDynamic'),
+-      preview: 'dynamic',
+-    },
+-    {
+-      value: BrowserLayout.COMPACT,
+-      name: loadTimeData.getString('browserLayoutCompact'),
+-      preview: 'compact',
+-    },
+-    {
+-      value: BrowserLayout.VERTICAL,
+-      name: loadTimeData.getString('browserLayoutVertical'),
+-      preview: 'vertical',
+-    },
+-  ];
+-
+   protected accessor showVerticalTabsExpandOnHoverEnabled_: boolean =
+       loadTimeData.getBoolean('showVerticalTabsExpandOnHoverEnabled');
+ 
+--- a/chrome/browser/ui/browser_command_controller.cc
++++ b/chrome/browser/ui/browser_command_controller.cc
+@@ -1860,14 +1860,15 @@ void BrowserCommandController::InitComma
+   command_updater_->UpdateCommandEnabled(IDC_MANAGE_SKILLS, true);
+   command_updater_->UpdateCommandEnabled(IDC_BROWSE_SKILLS, true);
+ 
+-  // Helium layout menu
+-  command_updater_->UpdateCommandEnabled(IDC_BROWSER_LAYOUT_MENU, true);
+-  command_updater_->UpdateCommandEnabled(IDC_BROWSER_LAYOUT_CLASSIC, true);
+-  command_updater_->UpdateCommandEnabled(IDC_BROWSER_LAYOUT_DYNAMIC, true);
+-  command_updater_->UpdateCommandEnabled(IDC_BROWSER_LAYOUT_COMPACT, true);
+-  command_updater_->UpdateCommandEnabled(IDC_BROWSER_LAYOUT_VERTICAL, true);
++  // Helium layout menu. Leto only has vertical tabs, so there is nothing to
++  // switch to.
++  command_updater_->UpdateCommandEnabled(IDC_BROWSER_LAYOUT_MENU, false);
++  command_updater_->UpdateCommandEnabled(IDC_BROWSER_LAYOUT_CLASSIC, false);
++  command_updater_->UpdateCommandEnabled(IDC_BROWSER_LAYOUT_DYNAMIC, false);
++  command_updater_->UpdateCommandEnabled(IDC_BROWSER_LAYOUT_COMPACT, false);
++  command_updater_->UpdateCommandEnabled(IDC_BROWSER_LAYOUT_VERTICAL, false);
+   command_updater_->UpdateCommandEnabled(IDC_BROWSER_LAYOUT_VERTICAL_RIGHT,
+-                                         true);
++                                         false);
+ 
+   // Window management commands
+   command_updater_->UpdateCommandEnabled(IDC_CLOSE_WINDOW, true);
+@@ -1880,7 +1881,7 @@ void BrowserCommandController::InitComma
+   UpdateTabRestoreCommandState();
+   command_updater_->UpdateCommandEnabled(IDC_EXIT, true);
+   command_updater_->UpdateCommandEnabled(IDC_NAME_WINDOW, true);
+-  command_updater_->UpdateCommandEnabled(IDC_TOGGLE_VERTICAL_TABS, true);
++  command_updater_->UpdateCommandEnabled(IDC_TOGGLE_VERTICAL_TABS, false);
+   command_updater_->UpdateCommandEnabled(IDC_VERTICAL_TABS_SEND_FEEDBACK, true);
+   command_updater_->UpdateCommandEnabled(
+       IDC_TOGGLE_VERTICAL_TABS_EXPAND_ON_HOVER, true);
+--- a/chrome/browser/ui/browser_shortcuts/browser_shortcut_metadata.cc
++++ b/chrome/browser/ui/browser_shortcuts/browser_shortcut_metadata.cc
+@@ -345,9 +345,6 @@ std::vector<int> GetBrowserShortcutComma
+   commands.push_back(IDC_DEV_TOOLS_DEVICES);
+   commands.push_back(IDC_SHOW_MANAGEMENT_PAGE);
+   commands.push_back(IDC_PERFORMANCE);
+-  commands.push_back(IDC_BROWSER_LAYOUT_CLASSIC);
+-  commands.push_back(IDC_BROWSER_LAYOUT_COMPACT);
+-  commands.push_back(IDC_BROWSER_LAYOUT_VERTICAL);
+   commands.push_back(IDC_OPTIONS);
+   return commands;
+ }
+--- a/chrome/browser/ui/helium/helium_layout_state_controller.cc
++++ b/chrome/browser/ui/helium/helium_layout_state_controller.cc
+@@ -22,9 +22,29 @@ HeliumLayoutStateController::HeliumLayou
+   pref_change_registrar_.Init(pref_service_);
+ 
+   pref_change_registrar_.AddMultiple(
+-      {prefs::kHeliumLayout, prefs::kHeliumZenMode},
+-      base::BindRepeating(&HeliumLayoutStateController::NotifyStateChanged,
++      {prefs::kHeliumLayout, prefs::kHeliumZenMode,
++       prefs::kHeliumVerticalRightAligned},
++      base::BindRepeating(&HeliumLayoutStateController::OnPrefsChanged,
+                           base::Unretained(this)));
++
++  EnforceVerticalLayout();
++}
++
++void HeliumLayoutStateController::OnPrefsChanged() {
++  EnforceVerticalLayout();
++  NotifyStateChanged();
++}
++
++void HeliumLayoutStateController::EnforceVerticalLayout() {
++  // Leto only has the vertical layout, with the sidebar on the left.
++  if (pref_service_->GetInteger(prefs::kHeliumLayout) !=
++      std::to_underlying(HeliumLayoutType::kVertical)) {
++    pref_service_->SetInteger(prefs::kHeliumLayout,
++                              std::to_underlying(HeliumLayoutType::kVertical));
++  }
++  if (pref_service_->GetBoolean(prefs::kHeliumVerticalRightAligned)) {
++    pref_service_->SetBoolean(prefs::kHeliumVerticalRightAligned, false);
++  }
+ }
+ 
+ HeliumLayoutStateController::~HeliumLayoutStateController() = default;
+@@ -56,7 +76,9 @@ bool HeliumLayoutStateController::IsZenM
+ }
+ 
+ void HeliumLayoutStateController::SetBrowserLayout(HeliumLayoutType layout) {
+-  pref_service_->SetInteger(prefs::kHeliumLayout, std::to_underlying(layout));
++  // Leto only has the vertical layout.
++  pref_service_->SetInteger(prefs::kHeliumLayout,
++                            std::to_underlying(HeliumLayoutType::kVertical));
+ }
+ 
+ HeliumLayoutType HeliumLayoutStateController::GetBrowserLayout() const {
+--- a/chrome/browser/ui/helium/helium_layout_state_controller.h
++++ b/chrome/browser/ui/helium/helium_layout_state_controller.h
+@@ -50,6 +50,9 @@ class HeliumLayoutStateController {
+       StateChangedCallback callback);
+ 
+  private:
++  void OnPrefsChanged();
++  // Resets the layout prefs to the vertical layout, the only one Leto has.
++  void EnforceVerticalLayout();
+   void NotifyStateChanged();
+ 
+   const raw_ptr<PrefService> pref_service_;
+--- a/chrome/browser/ui/views/frame/system_menu_model_builder.cc
++++ b/chrome/browser/ui/views/frame/system_menu_model_builder.cc
+@@ -170,28 +170,6 @@ void SystemMenuModelBuilder::BuildSystem
+   if (!browser()->GetProfile()->IsOffTheRecord()) {
+     model->AddSeparator(ui::NORMAL_SEPARATOR);
+ 
+-    browser_layout_menu_contents_ =
+-        std::make_unique<ui::SimpleMenuModel>(&menu_delegate_);
+-
+-    browser_layout_menu_contents_->AddCheckItemWithStringId(
+-        IDC_BROWSER_LAYOUT_CLASSIC, IDS_BROWSER_LAYOUT_CLASSIC);
+-    browser_layout_menu_contents_->AddCheckItemWithStringId(
+-        IDC_BROWSER_LAYOUT_DYNAMIC, IDS_BROWSER_LAYOUT_DYNAMIC);
+-    browser_layout_menu_contents_->AddCheckItemWithStringId(
+-        IDC_BROWSER_LAYOUT_COMPACT, IDS_BROWSER_LAYOUT_COMPACT);
+-    browser_layout_menu_contents_->AddCheckItemWithStringId(
+-        IDC_BROWSER_LAYOUT_VERTICAL, IDS_BROWSER_LAYOUT_VERTICAL);
+-    auto* layout_controller = HeliumLayoutStateController::From(browser());
+-    if (layout_controller && layout_controller->IsVerticalLayout()) {
+-      browser_layout_menu_contents_->AddSeparator(ui::NORMAL_SEPARATOR);
+-      browser_layout_menu_contents_->AddCheckItemWithStringId(
+-          IDC_BROWSER_LAYOUT_VERTICAL_RIGHT, IDS_BROWSER_LAYOUT_VERTICAL_RIGHT);
+-    }
+-
+-    model->AddSubMenuWithStringId(IDC_BROWSER_LAYOUT_MENU,
+-                                  IDS_BROWSER_LAYOUT_MENU,
+-                                  browser_layout_menu_contents_.get());
+-
+     model->AddItemWithStringId(IDC_SHOW_CUSTOMIZE_CHROME_SIDE_PANEL,
+                                IDS_SHOW_CUSTOMIZE_CHROME_SIDE_PANEL);
+   }
