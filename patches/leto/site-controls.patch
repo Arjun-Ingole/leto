@@ -1,0 +1,768 @@
+--- a/chrome/browser/ui/BUILD.gn
++++ b/chrome/browser/ui/BUILD.gn
+@@ -3368,6 +3368,8 @@ static_library("ui") {
+       "views/leto/global_appearance.h",
+       "views/leto/sidebar_header_view.cc",
+       "views/leto/sidebar_header_view.h",
++      "views/leto/site_controls_view.cc",
++      "views/leto/site_controls_view.h",
+       "views/leto/space_bar_view.cc",
+       "views/leto/space_bar_view.h",
+       "views/leto/space_switcher.cc",
+--- a/chrome/browser/ui/views/extensions/extensions_toolbar_desktop.cc
++++ b/chrome/browser/ui/views/extensions/extensions_toolbar_desktop.cc
+@@ -41,6 +41,8 @@
+ #include "chrome/browser/ui/views/extensions/extensions_toolbar_desktop_view_controller.h"
+ #include "chrome/browser/ui/views/frame/browser_view.h"
+ #include "chrome/browser/ui/views/frame/toolbar_button_provider.h"
++#include "chrome/browser/ui/views/leto/command_bar.h"
++#include "chrome/browser/ui/views/leto/site_controls_view.h"
+ #include "chrome/browser/ui/views/toolbar/toolbar_action_hover_card_controller.h"
+ #include "chrome/browser/ui/views/toolbar/toolbar_view.h"
+ #include "chrome/browser/user_education/user_education_service.h"
+@@ -72,6 +74,18 @@
+ 
+ namespace {
+ 
++#if BUILDFLAG(IS_MAC)
++// Where extension popups open while the toolbar is hidden, or null to use the
++// toolbar.
++views::View* GetLetoPopupAnchor(BrowserWindowInterface* browser) {
++  if (!leto::UsesCommandBar(browser)) {
++    return nullptr;
++  }
++  views::View* anchor = leto::GetExtensionPopupAnchor(browser);
++  return anchor && anchor->IsDrawn() ? anchor : nullptr;
++}
++#endif
++
+ class IphWidgetActivationObserver : public views::WidgetObserver {
+  public:
+   IphWidgetActivationObserver(views::Widget* widget,
+@@ -590,17 +604,17 @@ void ExtensionsToolbarDesktop::AnchorAnd
+   // Fix the position of widgets. Without this fix, extension-installed-bubble
+   // and extension-uninstall-dialog may be out of the window border on Linux.
+   const bool hide_pref = !browser_->GetProfile()->GetPrefs()->GetBoolean(
+-        prefs::kShowExtensionsButton);
+-  const bool hide_cmd = base::CommandLine::ForCurrentProcess()->HasSwitch(
+-        "hide-extensions-menu");
++      prefs::kShowExtensionsButton);
++  const bool hide_cmd =
++      base::CommandLine::ForCurrentProcess()->HasSwitch("hide-extensions-menu");
+   if (hide_pref || hide_cmd) {
+     views::View* anchor_view =
+         views::ElementTrackerViews::GetInstance()->GetFirstMatchingView(
+             kToolbarAppMenuButtonElementId,
+             views::ElementTrackerViews::GetContextForView(
+                 BrowserView::GetBrowserViewForBrowser(browser_)));
+-    widget->widget_delegate()->AsBubbleDialogDelegate()
+-      ->SetAnchorView(anchor_view);
++    widget->widget_delegate()->AsBubbleDialogDelegate()->SetAnchorView(
++        anchor_view);
+   }
+ 
+   widget->Show();
+@@ -1127,9 +1141,11 @@ void ExtensionsToolbarDesktop::UpdateCon
+ 
+ bool ExtensionsToolbarDesktop::ShouldContainerBeVisible() const {
+   if (!browser_->GetProfile()->GetPrefs()->GetBoolean(
+-      prefs::kShowExtensionsButton) ||
+-      base::CommandLine::ForCurrentProcess()->HasSwitch("hide-extensions-menu"))
++          prefs::kShowExtensionsButton) ||
++      base::CommandLine::ForCurrentProcess()->HasSwitch(
++          "hide-extensions-menu")) {
+     return false;
++  }
+ 
+   // The container (and extensions-menu button) should not be visible if we have
+   // no extensions.
+@@ -1279,6 +1295,12 @@ views::FocusManager* ExtensionsToolbarDe
+ 
+ views::BubbleAnchor ExtensionsToolbarDesktop::GetReferenceButtonForPopup(
+     const extensions::ExtensionId& action_id) {
++#if BUILDFLAG(IS_MAC)
++  // The toolbar is hidden, so popups open from the sidebar instead.
++  if (views::View* anchor = GetLetoPopupAnchor(browser_)) {
++    return views::BubbleAnchor(anchor);
++  }
++#endif
+   ToolbarActionView* view = GetViewForId(action_id);
+   return view ? view->GetReferenceButtonForPopup()
+               : GetExtensionsButtonAnchor();
+@@ -1289,6 +1311,11 @@ views::BubbleAnchor ExtensionsToolbarDes
+ }
+ 
+ views::BubbleBorder::Arrow ExtensionsToolbarDesktop::GetPopupArrow() const {
++#if BUILDFLAG(IS_MAC)
++  if (GetLetoPopupAnchor(browser_)) {
++    return views::BubbleBorder::LEFT_TOP;
++  }
++#endif
+   return views::BubbleBorder::TOP_RIGHT;
+ }
+ 
+--- a/chrome/browser/ui/views/leto/sidebar_header_view.cc
++++ b/chrome/browser/ui/views/leto/sidebar_header_view.cc
+@@ -18,14 +18,12 @@
+ #include "chrome/browser/ui/color/chrome_color_id.h"
+ #include "chrome/browser/ui/tabs/tab_strip_model.h"
+ #include "chrome/browser/ui/tabs/vertical_tab_strip_state_controller.h"
+-#include "chrome/browser/ui/views/page_info/page_info_bubble_specification.h"
+-#include "chrome/browser/ui/views/page_info/page_info_bubble_view.h"
++#include "chrome/browser/ui/views/leto/site_controls_view.h"
+ #include "chrome/browser/ui/views/toolbar/toolbar_ink_drop_util.h"
+ #include "chrome/common/pref_names.h"
+ #include "chrome/common/webui_url_constants.h"
+ #include "components/prefs/pref_service.h"
+ #include "components/vector_icons/vector_icons.h"
+-#include "content/public/browser/navigation_controller.h"
+ #include "content/public/browser/navigation_entry.h"
+ #include "content/public/browser/navigation_handle.h"
+ #include "content/public/browser/web_contents.h"
+@@ -34,8 +32,6 @@
+ #include "ui/gfx/geometry/insets.h"
+ #include "ui/views/accessibility/view_accessibility.h"
+ #include "ui/views/background.h"
+-#include "ui/views/bubble/bubble_border.h"
+-#include "ui/views/bubble/bubble_dialog_delegate_view.h"
+ #include "ui/views/controls/button/image_button.h"
+ #include "ui/views/controls/button/label_button.h"
+ #include "ui/views/layout/box_layout.h"
+@@ -161,6 +157,9 @@ SidebarHeaderView::SidebarHeaderView(Bro
+       base::BindRepeating(&SidebarHeaderView::ShowSiteControls,
+                           base::Unretained(this))));
+ 
++  // Extension popups open from the pill while the toolbar is hidden.
++  SetExtensionPopupAnchor(browser_, pill);
++
+   for (int id : {IDC_BACK, IDC_FORWARD}) {
+     chrome::AddCommandObserver(browser_, id, this);
+     EnabledStateChangedForCommand(id, chrome::IsCommandEnabled(browser_, id));
+@@ -196,6 +195,7 @@ SidebarHeaderView::SidebarHeaderView(Bro
+ }
+ 
+ SidebarHeaderView::~SidebarHeaderView() {
++  SetExtensionPopupAnchor(browser_, nullptr);
+   for (int id : {IDC_BACK, IDC_FORWARD}) {
+     chrome::RemoveCommandObserver(browser_, id, this);
+   }
+@@ -253,25 +253,7 @@ void SidebarHeaderView::UpdateSite() {
+ }
+ 
+ void SidebarHeaderView::ShowSiteControls() {
+-  // TODO(leto): Replace with an Arc style popover with quick actions and
+-  // extensions.
+-  content::WebContents* contents = web_contents();
+-  if (!contents) {
+-    return;
+-  }
+-  content::NavigationEntry* entry = contents->GetController().GetVisibleEntry();
+-  if (!entry || entry->IsInitialEntry()) {
+-    return;
+-  }
+-
+-  views::BubbleDialogDelegateView* bubble =
+-      PageInfoBubbleView::CreatePageInfoBubble(
+-          PageInfoBubbleSpecification::Builder(
+-              views::BubbleAnchor(controls_button_.get()),
+-              GetWidget()->GetNativeWindow(), contents, entry->GetVirtualURL())
+-              .Build());
+-  bubble->SetArrow(views::BubbleBorder::LEFT_TOP);
+-  bubble->GetWidget()->Show();
++  leto::ShowSiteControls(browser_, controls_button_);
+ }
+ 
+ BEGIN_METADATA(SidebarHeaderView)
+--- /dev/null
++++ b/chrome/browser/ui/views/leto/site_controls_view.cc
+@@ -0,0 +1,557 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/views/leto/site_controls_view.h"
++
++#include <algorithm>
++#include <map>
++#include <memory>
++#include <string>
++#include <utility>
++#include <vector>
++
++#include "base/containers/flat_set.h"
++#include "base/functional/bind.h"
++#include "base/location.h"
++#include "base/memory/raw_ptr.h"
++#include "base/no_destructor.h"
++#include "base/strings/string_util.h"
++#include "base/strings/utf_string_conversions.h"
++#include "base/task/sequenced_task_runner.h"
++#include "chrome/app/chrome_command_ids.h"
++#include "chrome/app/vector_icons/vector_icons.h"
++#include "chrome/browser/extensions/extension_context_menu_model.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/ssl/chrome_security_state_util.h"
++#include "chrome/browser/ui/browser_commands.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/chrome_pages.h"
++#include "chrome/browser/ui/extensions/extensions_container.h"
++#include "chrome/browser/ui/tabs/tab_strip_model.h"
++#include "chrome/browser/ui/toolbar/toolbar_action_view_model.h"
++#include "chrome/browser/ui/toolbar/toolbar_actions_model.h"
++#include "chrome/browser/ui/views/page_info/page_info_bubble_specification.h"
++#include "chrome/browser/ui/views/page_info/page_info_bubble_view.h"
++#include "components/favicon/content/content_favicon_driver.h"
++#include "components/security_state/core/security_state.h"
++#include "components/vector_icons/vector_icons.h"
++#include "content/public/browser/navigation_controller.h"
++#include "content/public/browser/navigation_entry.h"
++#include "content/public/browser/web_contents.h"
++#include "ui/base/metadata/metadata_header_macros.h"
++#include "ui/base/metadata/metadata_impl_macros.h"
++#include "ui/base/models/image_model.h"
++#include "ui/base/mojom/dialog_button.mojom.h"
++#include "ui/base/mojom/menu_source_type.mojom.h"
++#include "ui/color/color_id.h"
++#include "ui/gfx/font.h"
++#include "ui/gfx/geometry/insets.h"
++#include "ui/gfx/geometry/size.h"
++#include "ui/gfx/image/image.h"
++#include "ui/views/accessibility/view_accessibility.h"
++#include "ui/views/animation/ink_drop.h"
++#include "ui/views/background.h"
++#include "ui/views/bubble/bubble_border.h"
++#include "ui/views/bubble/bubble_dialog_delegate_view.h"
++#include "ui/views/context_menu_controller.h"
++#include "ui/views/controls/button/button.h"
++#include "ui/views/controls/button/image_button.h"
++#include "ui/views/controls/button/label_button.h"
++#include "ui/views/controls/highlight_path_generator.h"
++#include "ui/views/controls/image_view.h"
++#include "ui/views/controls/label.h"
++#include "ui/views/controls/menu/menu_runner.h"
++#include "ui/views/layout/box_layout.h"
++#include "ui/views/view.h"
++#include "ui/views/view_class_properties.h"
++#include "ui/views/widget/widget.h"
++#include "url/gurl.h"
++
++namespace leto {
++
++namespace {
++
++constexpr int kWidth = 304;
++constexpr int kPadding = 12;
++constexpr int kCornerRadius = 12;
++constexpr int kSectionSpacing = 14;
++constexpr int kTileHeight = 56;
++constexpr int kTileIconSize = 18;
++constexpr int kTileCornerRadius = 10;
++constexpr int kRowHeight = 32;
++constexpr int kRowIconSize = 16;
++constexpr int kRowCornerRadius = 8;
++constexpr int kExtensionButtonSize = 34;
++constexpr int kExtensionIconSize = 20;
++constexpr size_t kExtensionsPerRow = 8;
++
++// TODO(leto): Localize.
++constexpr char16_t kCopyLink[] = u"Copy Link";
++constexpr char16_t kCopied[] = u"Copied";
++constexpr char16_t kReader[] = u"Reader";
++constexpr char16_t kQrCode[] = u"QR Code";
++constexpr char16_t kFind[] = u"Find";
++constexpr char16_t kExtensions[] = u"Extensions";
++constexpr char16_t kManage[] = u"Manage";
++constexpr char16_t kNoExtensions[] = u"No extensions installed";
++constexpr char16_t kSecure[] = u"Connection is secure";
++constexpr char16_t kNotSecure[] = u"Connection is not secure";
++constexpr char16_t kSiteSettings[] = u"Site settings";
++
++std::map<BrowserWindowInterface*, views::View*>& PopupAnchors() {
++  static base::NoDestructor<std::map<BrowserWindowInterface*, views::View*>>
++      anchors;
++  return *anchors;
++}
++
++// A soft rounded highlight on hover, in the style of Helium's menus.
++void ConfigureHover(views::Button* button, int corner_radius) {
++  views::InkDrop::Get(button)->SetMode(views::InkDropHost::InkDropMode::ON);
++  button->SetHasInkDropActionOnClick(true);
++  views::InkDrop::Get(button)->SetBaseColor(ui::kColorSysOnSurface);
++  views::InkDrop::Get(button)->SetHighlightOpacity(0.06f);
++  views::InstallRoundRectHighlightPathGenerator(button, gfx::Insets(),
++                                                corner_radius);
++}
++
++std::unique_ptr<views::Label> MakeSectionLabel(std::u16string_view text) {
++  auto label = std::make_unique<views::Label>(std::u16string(text));
++  label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++  label->SetEnabledColor(ui::kColorSysOnSurfaceSubtle);
++  label->SetFontList(
++      label->font_list().DeriveWithSizeDelta(-1).DeriveWithWeight(
++          gfx::Font::Weight::MEDIUM));
++  return label;
++}
++
++// A quick action: an icon over a short label on a soft tile.
++class ActionTile : public views::Button {
++  METADATA_HEADER(ActionTile, views::Button)
++
++ public:
++  ActionTile(const gfx::VectorIcon& icon,
++             std::u16string_view text,
++             PressedCallback callback)
++      : views::Button(std::move(callback)) {
++    auto* layout = SetLayoutManager(std::make_unique<views::BoxLayout>(
++        views::BoxLayout::Orientation::kVertical, gfx::Insets::VH(8, 4), 4));
++    layout->set_main_axis_alignment(
++        views::BoxLayout::MainAxisAlignment::kCenter);
++    layout->set_cross_axis_alignment(
++        views::BoxLayout::CrossAxisAlignment::kCenter);
++    AddChildView(
++        std::make_unique<views::ImageView>(ui::ImageModel::FromVectorIcon(
++            icon, ui::kColorSysOnSurface, kTileIconSize)));
++    label_ = AddChildView(std::make_unique<views::Label>(std::u16string(text)));
++    label_->SetEnabledColor(ui::kColorSysOnSurfaceSubtle);
++    label_->SetFontList(label_->font_list().DeriveWithSizeDelta(-2));
++    SetBackground(views::CreateRoundedRectBackground(
++        ui::kColorSysStateHoverOnSubtle, kTileCornerRadius));
++    SetPreferredSize(gfx::Size(0, kTileHeight));
++    SetTooltipText(std::u16string(text));
++    GetViewAccessibility().SetName(std::u16string(text));
++    ConfigureHover(this, kTileCornerRadius);
++  }
++
++  void SetLabel(std::u16string_view text) {
++    label_->SetText(std::u16string(text));
++  }
++
++ private:
++  raw_ptr<views::Label> label_ = nullptr;
++};
++
++BEGIN_METADATA(ActionTile)
++END_METADATA
++
++// A row in a list: icon, label, and a trailing hint of where it leads.
++class ListRow : public views::Button {
++  METADATA_HEADER(ListRow, views::Button)
++
++ public:
++  ListRow(const gfx::VectorIcon& icon,
++          ui::ColorId icon_color,
++          std::u16string_view text,
++          const gfx::VectorIcon& trailing_icon,
++          PressedCallback callback)
++      : views::Button(std::move(callback)) {
++    auto* layout = SetLayoutManager(std::make_unique<views::BoxLayout>(
++        views::BoxLayout::Orientation::kHorizontal, gfx::Insets::VH(0, 8), 10));
++    layout->set_cross_axis_alignment(
++        views::BoxLayout::CrossAxisAlignment::kCenter);
++    layout->set_minimum_cross_axis_size(kRowHeight);
++    AddChildView(std::make_unique<views::ImageView>(
++        ui::ImageModel::FromVectorIcon(icon, icon_color, kRowIconSize)));
++    auto* label =
++        AddChildView(std::make_unique<views::Label>(std::u16string(text)));
++    label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++    label->SetEnabledColor(ui::kColorSysOnSurface);
++    layout->SetFlexForView(label, 1);
++    AddChildView(
++        std::make_unique<views::ImageView>(ui::ImageModel::FromVectorIcon(
++            trailing_icon, ui::kColorSysOnSurfaceSubtle, 14)));
++    GetViewAccessibility().SetName(std::u16string(text));
++    ConfigureHover(this, kRowCornerRadius);
++  }
++};
++
++BEGIN_METADATA(ListRow)
++END_METADATA
++
++class SiteControlsView;
++
++// An extension's action. Clicking runs it, as clicking its toolbar button
++// would; the context menu has the extension's options, pinning and removal.
++class ExtensionButton : public views::ImageButton,
++                        public views::ContextMenuController {
++  METADATA_HEADER(ExtensionButton, views::ImageButton)
++
++ public:
++  ExtensionButton(ToolbarActionViewModel* action,
++                  content::WebContents* contents,
++                  views::BubbleDialogDelegate* bubble,
++                  PressedCallback callback)
++      : views::ImageButton(std::move(callback)),
++        action_(action),
++        bubble_(bubble) {
++    SetImageModel(views::Button::STATE_NORMAL,
++                  action->GetIcon(contents, gfx::Size(kExtensionIconSize,
++                                                      kExtensionIconSize)));
++    SetImageHorizontalAlignment(views::ImageButton::ALIGN_CENTER);
++    SetImageVerticalAlignment(views::ImageButton::ALIGN_MIDDLE);
++    SetPreferredSize(gfx::Size(kExtensionButtonSize, kExtensionButtonSize));
++    SetTooltipText(action->GetActionName());
++    GetViewAccessibility().SetName(action->GetActionName());
++    set_context_menu_controller(this);
++    ConfigureHover(this, kRowCornerRadius);
++  }
++
++  // views::ContextMenuController:
++  void ShowContextMenuForViewImpl(
++      views::View* source,
++      const gfx::Point& point,
++      ui::mojom::MenuSourceType source_type) override {
++    ui::MenuModel* model = action_->GetContextMenu(
++        extensions::ExtensionContextMenuModel::ContextMenuSource::kMenuItem);
++    if (!model) {
++      return;
++    }
++    // Keep the popover open while its menu is.
++    close_pin_ = bubble_->PreventCloseOnDeactivate();
++    menu_runner_ = std::make_unique<views::MenuRunner>(
++        model, views::MenuRunner::CONTEXT_MENU,
++        base::BindRepeating(&ExtensionButton::OnMenuClosed,
++                            base::Unretained(this)));
++    menu_runner_->RunMenuAt(GetWidget(), nullptr, gfx::Rect(point, gfx::Size()),
++                            views::MenuAnchorPosition::kTopLeft, source_type);
++  }
++
++ private:
++  void OnMenuClosed() { close_pin_.reset(); }
++
++  raw_ptr<ToolbarActionViewModel> action_;
++  raw_ptr<views::BubbleDialogDelegate> bubble_;
++  std::unique_ptr<views::MenuRunner> menu_runner_;
++  std::unique_ptr<views::BubbleDialogDelegate::CloseOnDeactivatePin> close_pin_;
++};
++
++BEGIN_METADATA(ExtensionButton)
++END_METADATA
++
++void ShowPageInfo(BrowserWindowInterface* browser, views::View* anchor) {
++  content::WebContents* contents =
++      browser->GetTabStripModel()->GetActiveWebContents();
++  if (!contents || !anchor->GetWidget()) {
++    return;
++  }
++  content::NavigationEntry* entry = contents->GetController().GetVisibleEntry();
++  if (!entry || entry->IsInitialEntry()) {
++    return;
++  }
++  views::BubbleDialogDelegateView* bubble =
++      PageInfoBubbleView::CreatePageInfoBubble(
++          PageInfoBubbleSpecification::Builder(
++              views::BubbleAnchor(anchor),
++              anchor->GetWidget()->GetNativeWindow(), contents,
++              entry->GetVirtualURL())
++              .Build());
++  bubble->SetArrow(views::BubbleBorder::LEFT_TOP);
++  bubble->GetWidget()->Show();
++}
++
++class SiteControlsView : public views::View {
++  METADATA_HEADER(SiteControlsView, views::View)
++
++ public:
++  SiteControlsView(BrowserWindowInterface* browser,
++                   content::WebContents* contents,
++                   views::View* anchor,
++                   views::BubbleDialogDelegate* bubble)
++      : browser_(browser), anchor_(anchor), bubble_(bubble) {
++    SetLayoutManager(std::make_unique<views::BoxLayout>(
++        views::BoxLayout::Orientation::kVertical, gfx::Insets(),
++        kSectionSpacing));
++
++    AddHeader(contents);
++    AddQuickActions();
++    AddExtensions(contents);
++    AddSiteRows(contents);
++  }
++
++ private:
++  void AddHeader(content::WebContents* contents) {
++    auto* header = AddChildView(std::make_unique<views::View>());
++    auto* layout = header->SetLayoutManager(std::make_unique<views::BoxLayout>(
++        views::BoxLayout::Orientation::kHorizontal, gfx::Insets::VH(0, 4), 10));
++    layout->set_cross_axis_alignment(
++        views::BoxLayout::CrossAxisAlignment::kCenter);
++
++    auto* favicon = header->AddChildView(std::make_unique<views::ImageView>());
++    favicon->SetImageSize(gfx::Size(16, 16));
++    if (auto* driver =
++            favicon::ContentFaviconDriver::FromWebContents(contents)) {
++      gfx::Image image = driver->GetFavicon();
++      if (!image.IsEmpty()) {
++        favicon->SetImage(ui::ImageModel::FromImage(image));
++      }
++    }
++
++    const GURL& url = contents->GetVisibleURL();
++    std::u16string title;
++    if (url.SchemeIsHTTPOrHTTPS()) {
++      std::string_view host = url.host();
++      if (base::StartsWith(host, "www.")) {
++        host.remove_prefix(4);
++      }
++      title = base::UTF8ToUTF16(host);
++    } else {
++      title = contents->GetTitle();
++    }
++    auto* label = header->AddChildView(std::make_unique<views::Label>(title));
++    label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++    label->SetEnabledColor(ui::kColorSysOnSurface);
++    label->SetFontList(
++        label->font_list().DeriveWithSizeDelta(1).DeriveWithWeight(
++            gfx::Font::Weight::SEMIBOLD));
++    label->SetElideBehavior(gfx::ELIDE_HEAD);
++    layout->SetFlexForView(label, 1);
++  }
++
++  void AddQuickActions() {
++    auto* row = AddChildView(std::make_unique<views::View>());
++    auto* layout = row->SetLayoutManager(std::make_unique<views::BoxLayout>(
++        views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 8));
++
++    auto add_tile = [&](const gfx::VectorIcon& icon, std::u16string_view text,
++                        int command) -> ActionTile* {
++      if (!chrome::IsCommandEnabled(browser_, command)) {
++        return nullptr;
++      }
++      auto* tile = row->AddChildView(std::make_unique<ActionTile>(
++          icon, text,
++          base::BindRepeating(&SiteControlsView::RunCommand,
++                              base::Unretained(this), command)));
++      layout->SetFlexForView(tile, 1);
++      return tile;
++    };
++
++    copy_tile_ = add_tile(vector_icons::kLinkIcon, kCopyLink, IDC_COPY_URL);
++    if (copy_tile_) {
++      copy_tile_->SetCallback(base::BindRepeating(&SiteControlsView::CopyLink,
++                                                  base::Unretained(this)));
++    }
++    add_tile(kMenuBookIcon, kReader, IDC_SHOW_READING_MODE_SIDE_PANEL);
++    add_tile(kQrCodeIcon, kQrCode, IDC_QRCODE_GENERATOR);
++    add_tile(kFindInPageIcon, kFind, IDC_FIND);
++    row->SetVisible(!row->children().empty());
++  }
++
++  void AddExtensions(content::WebContents* contents) {
++    auto* section = AddChildView(std::make_unique<views::View>());
++    section->SetLayoutManager(std::make_unique<views::BoxLayout>(
++        views::BoxLayout::Orientation::kVertical, gfx::Insets(), 6));
++
++    auto* title_row = section->AddChildView(std::make_unique<views::View>());
++    auto* title_layout =
++        title_row->SetLayoutManager(std::make_unique<views::BoxLayout>(
++            views::BoxLayout::Orientation::kHorizontal, gfx::Insets::VH(0, 4)));
++    title_layout->set_cross_axis_alignment(
++        views::BoxLayout::CrossAxisAlignment::kCenter);
++    title_layout->SetFlexForView(
++        title_row->AddChildView(MakeSectionLabel(kExtensions)), 1);
++    auto* manage = title_row->AddChildView(std::make_unique<views::LabelButton>(
++        base::BindRepeating(&SiteControlsView::RunCommand,
++                            base::Unretained(this), IDC_MANAGE_EXTENSIONS),
++        kManage));
++    manage->SetEnabledTextColors(ui::kColorSysOnSurfaceSubtle);
++    manage->SetLabelStyle(views::style::STYLE_BODY_5);
++    manage->SetBorder(views::CreateEmptyBorder(gfx::Insets::VH(2, 6)));
++    manage->SetMinSize(gfx::Size());
++    ConfigureHover(manage, 6);
++
++    ToolbarActionsModel* model =
++        ToolbarActionsModel::Get(browser_->GetProfile());
++    ExtensionsContainer* container = ExtensionsContainer::From(*browser_);
++    std::vector<std::string> ids;
++    if (model && container) {
++      // Pinned extensions first, as they would sit in the toolbar.
++      for (const auto& id : model->pinned_action_ids()) {
++        ids.push_back(id);
++      }
++      for (const auto& id : model->action_ids()) {
++        if (!std::ranges::contains(ids, id)) {
++          ids.push_back(id);
++        }
++      }
++    }
++
++    if (ids.empty()) {
++      auto* empty =
++          section->AddChildView(std::make_unique<views::Label>(kNoExtensions));
++      empty->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++      empty->SetEnabledColor(ui::kColorSysOnSurfaceSubtle);
++      empty->SetBorder(views::CreateEmptyBorder(gfx::Insets::VH(4, 4)));
++      return;
++    }
++
++    views::View* grid_row = nullptr;
++    for (const auto& id : ids) {
++      ToolbarActionViewModel* action = container->GetActionForId(id);
++      if (!action) {
++        continue;
++      }
++      if (!grid_row || grid_row->children().size() == kExtensionsPerRow) {
++        grid_row = section->AddChildView(std::make_unique<views::View>());
++        grid_row->SetLayoutManager(std::make_unique<views::BoxLayout>(
++            views::BoxLayout::Orientation::kHorizontal, gfx::Insets(), 2));
++      }
++      grid_row->AddChildView(std::make_unique<ExtensionButton>(
++          action, contents, bubble_,
++          base::BindRepeating(&SiteControlsView::RunExtension,
++                              base::Unretained(this), id)));
++    }
++  }
++
++  void AddSiteRows(content::WebContents* contents) {
++    auto* rows = AddChildView(std::make_unique<views::View>());
++    rows->SetLayoutManager(std::make_unique<views::BoxLayout>(
++        views::BoxLayout::Orientation::kVertical));
++
++    const GURL& url = contents->GetVisibleURL();
++    if (url.SchemeIsHTTPOrHTTPS()) {
++      const bool secure = chrome_security_state::GetSecurityLevel(contents) ==
++                          security_state::SECURE;
++      rows->AddChildView(std::make_unique<ListRow>(
++          secure ? vector_icons::kLockIcon
++                 : vector_icons::kNotSecureWarningOldIcon,
++          secure ? ui::kColorSysOnSurface : ui::kColorSysError,
++          secure ? kSecure : kNotSecure, kChevronRightIcon,
++          base::BindRepeating(&SiteControlsView::OpenPageInfo,
++                              base::Unretained(this))));
++      rows->AddChildView(std::make_unique<ListRow>(
++          vector_icons::kSettingsIcon, ui::kColorSysOnSurface, kSiteSettings,
++          vector_icons::kOpenInNewFlippableIcon,
++          base::BindRepeating(&SiteControlsView::OpenSiteSettings,
++                              base::Unretained(this), url)));
++    }
++    rows->SetVisible(!rows->children().empty());
++  }
++
++  void Close() { bubble_->GetWidget()->Close(); }
++
++  void RunCommand(int command) {
++    Close();
++    chrome::ExecuteCommand(browser_, command);
++  }
++
++  void CopyLink() {
++    chrome::ExecuteCommand(browser_, IDC_COPY_URL);
++    copy_tile_->SetLabel(kCopied);
++  }
++
++  void RunExtension(const std::string& id) {
++    Close();
++    // The popup opens from the sidebar; see GetExtensionPopupAnchor().
++    if (ExtensionsContainer* container = ExtensionsContainer::From(*browser_)) {
++      if (ToolbarActionViewModel* action = container->GetActionForId(id)) {
++        action->ExecuteUserAction(
++            ToolbarActionViewModel::InvocationSource::kMenuEntry);
++      }
++    }
++  }
++
++  void OpenPageInfo() {
++    Close();
++    ShowPageInfo(browser_, anchor_);
++  }
++
++  void OpenSiteSettings(const GURL& url) {
++    Close();
++    chrome::ShowSiteSettings(browser_, url);
++  }
++
++  raw_ptr<BrowserWindowInterface> browser_;
++  raw_ptr<views::View> anchor_;
++  raw_ptr<views::BubbleDialogDelegate> bubble_;
++  raw_ptr<ActionTile> copy_tile_ = nullptr;
++};
++
++BEGIN_METADATA(SiteControlsView)
++END_METADATA
++
++// Owns an open popover; the delegate must outlive its widget.
++struct SiteControlsHost {
++  std::unique_ptr<views::BubbleDialogDelegate> delegate;
++  std::unique_ptr<views::Widget> widget;
++};
++
++}  // namespace
++
++void ShowSiteControls(BrowserWindowInterface* browser, views::View* anchor) {
++  content::WebContents* contents =
++      browser->GetTabStripModel()->GetActiveWebContents();
++  if (!contents || !anchor->GetWidget()) {
++    return;
++  }
++
++  auto host = std::make_unique<SiteControlsHost>();
++  host->delegate = std::make_unique<views::BubbleDialogDelegate>(
++      views::BubbleAnchor(anchor), views::BubbleBorder::LEFT_TOP);
++  views::BubbleDialogDelegate* delegate = host->delegate.get();
++  delegate->SetButtons(static_cast<int>(ui::mojom::DialogButton::kNone));
++  delegate->SetShowCloseButton(false);
++  delegate->set_margins(gfx::Insets(kPadding));
++  delegate->set_corner_radius(kCornerRadius);
++  delegate->set_fixed_width(kWidth);
++  delegate->SetContentsView(
++      std::make_unique<SiteControlsView>(browser, contents, anchor, delegate));
++
++  SiteControlsHost* raw_host = host.release();
++  raw_host->widget = views::BubbleDialogDelegate::CreateBubble(
++      delegate,
++      base::BindOnce(
++          [](SiteControlsHost* host, views::Widget::ClosedReason) {
++            host->widget->Hide();
++            base::SequencedTaskRunner::GetCurrentDefault()->DeleteSoon(
++                FROM_HERE, host);
++          },
++          raw_host));
++  raw_host->widget->Show();
++}
++
++void SetExtensionPopupAnchor(BrowserWindowInterface* browser,
++                             views::View* anchor) {
++  if (anchor) {
++    PopupAnchors()[browser] = anchor;
++  } else {
++    PopupAnchors().erase(browser);
++  }
++}
++
++views::View* GetExtensionPopupAnchor(BrowserWindowInterface* browser) {
++  auto it = PopupAnchors().find(browser);
++  return it == PopupAnchors().end() ? nullptr : it->second;
++}
++
++}  // namespace leto
+--- /dev/null
++++ b/chrome/browser/ui/views/leto/site_controls_view.h
+@@ -0,0 +1,30 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_VIEWS_LETO_SITE_CONTROLS_VIEW_H_
++#define CHROME_BROWSER_UI_VIEWS_LETO_SITE_CONTROLS_VIEW_H_
++
++class BrowserWindowInterface;
++
++namespace views {
++class View;
++}  // namespace views
++
++namespace leto {
++
++// Shows the Arc style site controls for the active tab in a popover anchored
++// to `anchor`: quick actions, the profile's extensions, and the connection
++// and site settings.
++void ShowSiteControls(BrowserWindowInterface* browser, views::View* anchor);
++
++// Registers the view extension popups anchor to while the toolbar is hidden;
++// pass null to clear it.
++void SetExtensionPopupAnchor(BrowserWindowInterface* browser,
++                             views::View* anchor);
++// Returns the registered anchor, or null.
++views::View* GetExtensionPopupAnchor(BrowserWindowInterface* browser);
++
++}  // namespace leto
++
++#endif  // CHROME_BROWSER_UI_VIEWS_LETO_SITE_CONTROLS_VIEW_H_
