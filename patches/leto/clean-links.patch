@@ -1,0 +1,150 @@
+--- a/chrome/browser/ui/BUILD.gn
++++ b/chrome/browser/ui/BUILD.gn
+@@ -3361,6 +3361,8 @@ static_library("ui") {
+       "views/helium/fullscreen_window_controls_mac.mm",
+       "views/helium/native_frame_materials_mac.h",
+       "views/helium/native_frame_materials_mac.mm",
++      "views/leto/clean_url.cc",
++      "views/leto/clean_url.h",
+       "views/leto/command_bar.h",
+       "views/leto/command_bar_view.cc",
+       "views/leto/command_bar_view.h",
+--- a/chrome/browser/ui/browser_commands.cc
++++ b/chrome/browser/ui/browser_commands.cc
+@@ -126,6 +126,7 @@
+ #include "chrome/browser/ui/ui_features.h"
+ #include "chrome/browser/ui/user_education/browser_user_education_interface.h"
+ #include "chrome/browser/ui/views/frame/browser_view.h"
++#include "chrome/browser/ui/views/leto/clean_url.h"
+ #include "chrome/browser/ui/views/tabs/organizer/organizer_panel_utils.h"
+ #include "chrome/browser/ui/waap/initial_webui_window_metrics_manager.h"
+ #include "chrome/browser/ui/web_applications/app_browser_controller.h"
+@@ -285,10 +286,11 @@ const char kOsOverrideForTabletSite[] =
+ const char kChPlatformOverrideForTabletSite[] = "Android";
+ 
+ std::u16string FormatURLForCopy(content::WebContents* web_contents) {
+-  return url_formatter::FormatUrl(web_contents->GetVisibleURL(),
+-                                  url_formatter::kFormatReplaceChromeProtocol,
+-                                  base::UnescapeRule::NORMAL, nullptr, nullptr,
+-                                  nullptr);
++  // Leto: copied links leave out tracking parameters.
++  return url_formatter::FormatUrl(
++      leto::RemoveTrackingParameters(web_contents->GetVisibleURL()),
++      url_formatter::kFormatReplaceChromeProtocol, base::UnescapeRule::NORMAL,
++      nullptr, nullptr, nullptr);
+ }
+ 
+ // Creates a new tabbed browser window, with the same size, type and profile as
+--- /dev/null
++++ b/chrome/browser/ui/views/leto/clean_url.cc
+@@ -0,0 +1,87 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/views/leto/clean_url.h"
++
++#include <string>
++#include <string_view>
++#include <vector>
++
++#include "base/containers/fixed_flat_set.h"
++#include "base/strings/string_split.h"
++#include "base/strings/string_util.h"
++#include "url/gurl.h"
++
++namespace leto {
++
++namespace {
++
++// Click and campaign identifiers added by ad networks, mailing tools and
++// social sites. They never change what the page shows.
++constexpr auto kTrackingParameters = base::MakeFixedFlatSet<std::string_view>({
++    "_hsenc",     "_hsmi",         "_openstat", "__hsfp",  "__hssc",
++    "__hstc",     "dclid",         "fbclid",    "gbraid",  "gclid",
++    "gclsrc",     "hsCtaTracking", "igsh",      "igshid",  "li_fat_id",
++    "mc_cid",     "mc_eid",        "mkt_tok",   "msclkid", "oly_anon_id",
++    "oly_enc_id", "rb_clickid",    "s_cid",     "srsltid", "ttclid",
++    "twclid",     "vero_conv",     "vero_id",   "wbraid",  "wickedid",
++    "yclid",
++});
++
++// Parameters that are only tracking on particular sites, where a generic name
++// like "si" is the share identifier.
++bool IsSiteTrackingParameter(std::string_view host, std::string_view key) {
++  if (base::StartsWith(host, "www.")) {
++    host.remove_prefix(4);
++  }
++  if (host == "youtube.com" || host == "m.youtube.com" ||
++      host == "music.youtube.com" || host == "youtu.be") {
++    return key == "si" || key == "pp" || key == "feature";
++  }
++  if (host == "open.spotify.com") {
++    return key == "si" || key == "context";
++  }
++  if (host == "x.com" || host == "twitter.com") {
++    return key == "s" || key == "t" || key == "ref_src" || key == "ref_url";
++  }
++  return false;
++}
++
++bool IsTrackingParameter(std::string_view host, std::string_view key) {
++  return base::StartsWith(key, "utm_") ||
++         kTrackingParameters.contains(key) ||
++         IsSiteTrackingParameter(host, key);
++}
++
++}  // namespace
++
++GURL RemoveTrackingParameters(const GURL& url) {
++  if (!url.SchemeIsHTTPOrHTTPS() || !url.has_query()) {
++    return url;
++  }
++  std::vector<std::string_view> kept;
++  bool removed = false;
++  for (std::string_view part :
++       base::SplitStringPiece(url.query(), "&", base::KEEP_WHITESPACE,
++                              base::SPLIT_WANT_NONEMPTY)) {
++    if (IsTrackingParameter(url.host(), part.substr(0, part.find('=')))) {
++      removed = true;
++    } else {
++      kept.push_back(part);
++    }
++  }
++  if (!removed) {
++    return url;
++  }
++  const std::string query = base::JoinString(kept, "&");
++  GURL::Replacements replacements;
++  if (query.empty()) {
++    replacements.ClearQuery();
++  } else {
++    replacements.SetQueryStr(query);
++  }
++  return url.ReplaceComponents(replacements);
++}
++
++}  // namespace leto
+--- /dev/null
++++ b/chrome/browser/ui/views/leto/clean_url.h
+@@ -0,0 +1,20 @@
++// Copyright 2026 The Leto Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_VIEWS_LETO_CLEAN_URL_H_
++#define CHROME_BROWSER_UI_VIEWS_LETO_CLEAN_URL_H_
++
++class GURL;
++
++namespace leto {
++
++// Returns `url` without the query parameters that only exist to track who
++// shared it and where it was clicked (utm_*, fbclid, gclid, YouTube's si and
++// the like), for links Leto copies. Other parameters keep their order and
++// encoding.
++GURL RemoveTrackingParameters(const GURL& url);
++
++}  // namespace leto
++
++#endif  // CHROME_BROWSER_UI_VIEWS_LETO_CLEAN_URL_H_
