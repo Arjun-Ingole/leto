@@ -1,0 +1,20 @@
+--- a/components/search_engines/template_url_service.cc
++++ b/components/search_engines/template_url_service.cc
+@@ -1676,6 +1676,17 @@ void TemplateURLService::LoadBangs() {
+ void TemplateURLService::BangsLoadedCallback() {
+   VLOG(2) << "BangsLoadedCallback() called";
+ 
++  // Bangs are numbered after the stored engines. If they arrive before the
++  // keywords database has loaded, they would take IDs that stored engines
++  // already use, and selecting a stored engine by ID (e.g. making it the
++  // default in settings) could pick a bang instead.
++  if (!loaded_) {
++    on_loaded_callbacks_.AddUnsafe(
++        base::BindOnce(&TemplateURLService::BangsLoadedCallback,
++                       weak_ptr_factory_.GetWeakPtr()));
++    return;
++  }
++
+   for (const auto& bang : bang_manager_->GetBangs()) {
+     auto template_data = TemplateURLDataFromBang(bang);
+ 
