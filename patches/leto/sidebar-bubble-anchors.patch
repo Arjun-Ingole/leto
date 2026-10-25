@@ -1,0 +1,70 @@
+--- a/chrome/browser/ui/views/bubble_anchor_util_views.cc
++++ b/chrome/browser/ui/views/bubble_anchor_util_views.cc
+@@ -27,14 +27,55 @@
+ #include "ui/views/bubble/bubble_border.h"
+ #include "ui/views/interaction/element_tracker_views.h"
+ 
++#if BUILDFLAG(IS_MAC)
++#include "chrome/browser/ui/views/leto/command_bar.h"
++#include "chrome/browser/ui/views/leto/site_controls_view.h"
++#endif
++
+ // This file contains the bubble_anchor_util implementation for a Views
+ // browser window (BrowserView).
+ 
+ namespace bubble_anchor_util {
+ 
++#if BUILDFLAG(IS_MAC)
++namespace {
++
++// Leto: the toolbar stays hidden, and anchoring to it would bring it back, so
++// bubbles about the page open from the sidebar's site pill instead, revealing
++// the sidebar if it is hidden.
++std::optional<AnchorConfiguration> GetSidebarAnchorConfiguration(
++    BrowserWindowInterface* browser) {
++  if (!browser || !leto::UsesCommandBar(browser)) {
++    return std::nullopt;
++  }
++  views::View* pill = leto::GetExtensionPopupAnchor(browser);
++  if (!pill || !pill->GetWidget()) {
++    return std::nullopt;
++  }
++  if (BrowserView* browser_view =
++          BrowserView::GetBrowserViewForBrowser(browser)) {
++    browser_view->RevealSidebarForBubble();
++  }
++  if (!pill->IsDrawn()) {
++    return std::nullopt;
++  }
++  return AnchorConfiguration{views::BubbleAnchor(pill), std::nullopt,
++                             views::BubbleBorder::LEFT_TOP};
++}
++
++}  // namespace
++#endif
++
+ AnchorConfiguration GetPageInfoAnchorConfiguration(
+     BrowserWindowInterface* browser,
+     Anchor anchor) {
++#if BUILDFLAG(IS_MAC)
++  if (anchor != Anchor::kCustomTabBar) {
++    if (auto sidebar_anchor = GetSidebarAnchorConfiguration(browser)) {
++      return *sidebar_anchor;
++    }
++  }
++#endif
+   BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser);
+   auto* location_bar_view =
+       browser_view ? browser_view->GetLocationBarView() : nullptr;
+@@ -129,6 +170,11 @@ AnchorConfiguration GetPermissionPromptB
+       tab ? tab->GetBrowserWindowInterface()
+           : webui::GetBrowserWindowInterface(web_contents);
+   if (browser) {
++#if BUILDFLAG(IS_MAC)
++    if (auto sidebar_anchor = GetSidebarAnchorConfiguration(browser)) {
++      return *sidebar_anchor;
++    }
++#endif
+     LocationBar* location_bar =
+         BrowserWindow::FromBrowser(browser)->GetLocationBar();
+     ChipController* chip_controller =
