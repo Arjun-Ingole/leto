@@ -115,6 +115,9 @@ write_gn_args() {
     echo 'enable_sparkle=true' >> "$args"
     printf 'sparkle_ed_key="%s"\n' "$LETO_SPARKLE_ED_PUB_KEY" >> "$args"
     echo 'sparkle_automatic_checks=true' >> "$args"
+    # Leto: hand the framework and its Widevine signature, once Leto has
+    # one, to the CDM for verified media path checks (see widevine-vmp.patch).
+    echo 'enable_cdm_host_verification=true' >> "$args"
   fi
 }
 
