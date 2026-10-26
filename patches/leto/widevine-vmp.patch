@@ -1,0 +1,51 @@
+--- a/chrome/common/media/cdm_host_file_path.cc
++++ b/chrome/common/media/cdm_host_file_path.cc
+@@ -19,7 +19,10 @@
+ #include "base/apple/bundle_locations.h"
+ #endif
+ 
+-#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
++// Leto: Leto's framework is signed for Widevine's verified media path, so
++// pass it to the CDM as Chrome does; services like Spotify won't play
++// without it.
++#if BUILDFLAG(GOOGLE_CHROME_BRANDING) || BUILDFLAG(IS_MAC)
+ 
+ namespace {
+ 
+@@ -105,7 +108,7 @@ void AddCdmHostFilePaths(
+ #endif  // BUILDFLAG(IS_WIN)
+ }
+ 
+-#else  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
++#else  // BUILDFLAG(GOOGLE_CHROME_BRANDING) || BUILDFLAG(IS_MAC)
+ 
+ void AddCdmHostFilePaths(
+     std::vector<media::CdmHostFilePath>* cdm_host_file_paths) {
+@@ -113,4 +116,4 @@ void AddCdmHostFilePaths(
+                       "verify the host.";
+ }
+ 
+-#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
++#endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING) || BUILDFLAG(IS_MAC)
+--- a/chrome/BUILD.gn
++++ b/chrome/BUILD.gn
+@@ -720,7 +720,9 @@ if (is_win) {
+       ":verify_chrome_framework_order",
+     ]
+ 
+-    if (enable_widevine_cdm_host_verification) {
++    # Leto: the signature is made with castlabs EVS when packaging, after
++    # the build, as Google's signing tool isn't available outside Google.
++    if (enable_widevine_cdm_host_verification && is_chrome_branded) {
+       # The :chrome_framework_widevine_signature target copies into the
+       # :chrome_framework bundle. But because the signing file depends on the
+       # framework itself, that would cause a cyclical dependency. Instead,
+@@ -1222,7 +1224,7 @@ if (is_win) {
+     }
+   }
+ 
+-  if (enable_widevine_cdm_host_verification) {
++  if (enable_widevine_cdm_host_verification && is_chrome_branded) {
+     widevine_sign_file("sign_chrome_framework_for_widevine") {
+       file = "$root_out_dir/$chrome_framework_name.framework/Versions/$chrome_framework_version/$chrome_framework_name"
+       flags = 1
