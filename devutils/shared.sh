@@ -62,6 +62,9 @@ prepare_sources() {
   helium_resources
 }
 
+# The public half of Leto's update key, whose private half signs releases.
+LETO_SPARKLE_ED_PUB_KEY="QdKVs/vzowxwD8tiP4mXbvv0L1A6qLP+0EjXp6mVjgc="
+
 write_gn_args() {
   local arch="$1" mode="$2" args="$_out_dir/args.gn"
   local target_cpu=arm64
@@ -104,6 +107,14 @@ write_gn_args() {
 
   if [ "$mode" != dev ]; then
     echo 'chrome_pgo_phase=2' >> "$args"
+  fi
+
+  if [ "$mode" = release ]; then
+    # Leto: releases update themselves from Leto's GitHub releases, signed
+    # with Leto's update key (see release_leto.sh).
+    echo 'enable_sparkle=true' >> "$args"
+    printf 'sparkle_ed_key="%s"\n' "$LETO_SPARKLE_ED_PUB_KEY" >> "$args"
+    echo 'sparkle_automatic_checks=true' >> "$args"
   fi
 }
 
