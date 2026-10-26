@@ -1,0 +1,21 @@
+--- a/components/helium_services/helium_services_helpers.cc
++++ b/components/helium_services/helium_services_helpers.cc
+@@ -28,10 +28,17 @@ namespace helium {
+ #endif
+ 
+ #if defined(UPDATES_SUPPORTED)
++#if BUILDFLAG(IS_MAC)
++// Leto: updates come from Leto's own releases on GitHub, signed with Leto's
++// key, rather than Helium's update server, which serves Helium.
++constexpr std::string_view kUpdateBaseUrl =
++    "https://github.com/Arjun-Ingole/leto/releases/latest/download/";
++#else
+ constexpr std::string_view kUpdateBaseUrl = "https://updates.helium.computer/";
++#endif
+ constexpr const char kUpdatePath[] =
+ #if BUILDFLAG(IS_MAC)
+-    "mac/appcast-" CPU_ARCH_STR ".xml";
++    "appcast-" CPU_ARCH_STR ".xml";
+ #elif BUILDFLAG(IS_WIN)
+     "win/appcast.xml";
+ #endif
